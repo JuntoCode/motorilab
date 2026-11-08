@@ -1,6 +1,8 @@
 import { EngineViewer } from './core/viewer.js';
 import { FAMILIES, READY, loadEngine } from './catalog.js';
 import { META } from './catalog-meta.js';
+import { Workshop, GICON, starsHtml } from './game/workshop.js';
+import { engineStars, totalStars, MODES as GAME_MODES } from './game/records.js';
 
 const app = document.getElementById('app');
 let cleanup = () => {};
@@ -44,7 +46,14 @@ const ICON = {
   info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>',
   zoom: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4M8 11h6M11 8v6"/></svg>',
   tap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3" fill="currentColor"/><circle cx="12" cy="12" r="8" stroke-dasharray="3 3"/></svg>',
+  lift: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="13" width="12" height="7" rx="1.5"/><path d="M12 10V3M8.5 6.5L12 3l3.5 3.5"/></svg>',
+  undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg>',
+  screw: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M7 3h10v4H7z"/><path d="M10 7v13l2 2 2-2V7M10 11l4-1.5M10 15l4-1.5"/><path d="M19 4a3 3 0 0 1 0 4" stroke-linecap="round"/></svg>',
+  restore: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="13" width="12" height="7" rx="1.5"/><path d="M12 3v7M8.5 6.5L12 10l3.5-3.5"/></svg>',
+  wrench: GICON.wrench,
   reset: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4h4"/></svg>',
+  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>',
+  arrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
 };
 function setBgIfExists(el, url, prop) {
   const img = new Image();
@@ -55,6 +64,7 @@ function setBgIfExists(el, url, prop) {
 function familyOf(id) {
   return FAMILIES.find((f) => f.engines.some((e) => e.id === id));
 }
+const MAX_STARS = GAME_MODES.length * 3;
 
 // ---------- Router ----------
 function route() {
@@ -64,15 +74,17 @@ function route() {
   window.scrollTo(0, 0);
   const [path, query = ''] = location.hash.replace(/^#\/?/, '').split('?');
   const parts = path.split('/');
+  const params = new URLSearchParams(query);
+  document.body.classList.remove('on-engine');
   document.querySelectorAll('[data-nav]').forEach((a) => a.classList.remove('active'));
   const nav = (k) => document.querySelector(`[data-nav="${k}"]`)?.classList.add('active');
-  if (parts[0] === 'motore' && parts[1]) return renderEngine(parts[1]);
+  if (parts[0] === 'motore' && parts[1]) return renderEngine(parts[1], false, params);
   // Dev preview of an engine file not yet in the catalog: #/anteprima/<file name without .js>
-  if (parts[0] === 'anteprima' && parts[1]) return renderEngine(parts[1], true);
+  if (parts[0] === 'anteprima' && parts[1]) return renderEngine(parts[1], true, params);
   if (parts[0] === 'confronta') return nav('compare'), renderCompare();
   if (parts[0] === 'quiz') return nav('quiz'), renderQuiz();
   nav('home');
-  renderHome(new URLSearchParams(query));
+  renderHome(params);
 }
 window.addEventListener('hashchange', route);
 route();
@@ -81,46 +93,63 @@ route();
 function renderHome(params = new URLSearchParams()) {
   app.innerHTML = '';
   const total = READY.length;
+  const stars = totalStars(READY.map((e) => e.id));
+  const maxStars = total * MAX_STARS;
   const hero = h(`
     <section class="hero">
-      <div>
+      <div class="hero-copy">
         <div class="eyebrow">Laboratorio 3D interattivo</div>
-        <h1>Guarda <em>dentro</em> i motori che muovono il mondo.</h1>
-        <p>Auto, moto, aerei, razzi, treni e navi. Aprili, smontali e guarda cosa succede dentro.</p>
+        <h1>Guarda <em>dentro</em> i motori.<br>Poi <em>smontali</em>.</h1>
+        <p>Auto, moto, aerei, razzi, treni e navi: ${total} motori da aprire in sezione, far girare al rallentatore e smontare pezzo per pezzo, con gli attrezzi in mano e il cronometro che corre.</p>
         <div class="cta">
-          <a class="btn primary" href="#/motore/petrol4t">Inizia dal motore dell’auto</a>
-          <a class="btn ghost" href="#esplora" data-scroll>Tutti i ${total} motori</a>
+          <a class="btn primary" href="#/motore/petrol4t">Apri il motore dell’auto ${ICON.arrow}</a>
+          <a class="btn hazard" href="#/motore/petrol4t?gioca=menu">${GICON.wrench} Sfida in officina</a>
         </div>
-        <div class="hero-stats">
-          <div><b>${total}</b><span>motori in 3D</span></div>
-          <div><b>${FAMILIES.length}</b><span>famiglie di mezzi</span></div>
-          <div><b>${READY.length * 4}</b><span>domande di quiz</span></div>
-        </div>
+        <dl class="hero-stats">
+          <div><dt>${total}</dt><dd>motori in 3D</dd></div>
+          <div><dt>3</dt><dd>sfide per motore</dd></div>
+          <div><dt>${stars}<small>/${maxStars}</small></dt><dd>stelle conquistate</dd></div>
+        </dl>
       </div>
-      <div class="stage-hero"></div>
+      <div class="stage-hero"><span class="hero-tag">Benzina 4 tempi · in sezione</span></div>
     </section>`);
-  setBgIfExists(hero, 'assets/img/hero.png', '--hero-img');
   app.appendChild(hero);
+
+  app.appendChild(
+    h(`<section class="how">
+      <a class="how-card" href="#esplora" data-scroll><span class="how-n">01</span>${ICON.cut}<h3>Aprilo</h3><p>Sezione, esploso e fasi al rallentatore: vedi cosa succede dentro mentre gira.</p></a>
+      <a class="how-card" href="#/motore/petrol4t?gioca=strip"><span class="how-n">02</span>${GICON.wrench}<h3>Smontalo</h3><p>Mano e chiave: trascina i pezzi, svita le viti, rispetta l’ordine. Ogni errore costa punti.</p></a>
+      <a class="how-card" href="#/motore/petrol4t?gioca=build"><span class="how-n">03</span>${GICON.puzzle}<h3>Rimontalo</h3><p>I pezzi sono sul banco, alla rinfusa. Sai rimetterli al loro posto?</p></a>
+      <a class="how-card" href="#/motore/turbofan?gioca=hunt"><span class="how-n">04</span>${GICON.target}<h3>Riconoscilo</h3><p>Trova il pezzo giusto sul modello prima che scada il tempo.</p></a>
+    </section>`)
+  );
 
   const fam0 = params.get('famiglia') || 'tutti';
   const explore = h(`<section class="explore" id="esplora">
       <div class="explore-head">
         <div>
-          <h2>Esplora i motori</h2>
+          <div class="eyebrow">Il garage</div>
+          <h2>Scegli un motore</h2>
         </div>
-        <label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
-          <input type="search" placeholder="Cerca: diesel, elica, razzo…" aria-label="Cerca un motore"></label>
+        <div class="garage" title="Stelle conquistate nelle sfide">
+          <div class="garage-top"><span>Patentino del meccanico</span><b>${stars} / ${maxStars} ${GICON.star}</b></div>
+          <div class="garage-bar"><i style="width:${(stars / maxStars) * 100}%"></i></div>
+        </div>
       </div>
-      <div class="filters" role="tablist">
-        <button data-f="tutti">Tutti <i>${total}</i></button>
-        ${FAMILIES.map((f) => `<button data-f="${f.id}">${esc(f.name)} <i>${f.engines.filter((e) => e.load).length}</i></button>`).join('')}
+      <div class="explore-tools">
+        <div class="filters" role="tablist">
+          <button data-f="tutti">Tutti <i>${total}</i></button>
+          ${FAMILIES.map((f) => `<button data-f="${f.id}">${esc(f.name)} <i>${f.engines.filter((e) => e.load).length}</i></button>`).join('')}
+        </div>
+        <label class="search">${ICON.search}
+          <input type="search" placeholder="Cerca: diesel, elica, razzo…" aria-label="Cerca un motore"></label>
       </div>
       <div class="groups"></div>
       <p class="empty" hidden>Nessun motore trovato. Prova con un’altra parola.</p>
     </section>`);
   app.appendChild(explore);
   app.appendChild(
-    h(`<footer class="footer">MotoriLab — progetto didattico. Modelli 3D semplificati a scopo educativo; i valori sono tipici e indicativi.</footer>`)
+    h(`<footer class="footer"><span>Motori<b>Lab</b></span> Progetto didattico. Modelli 3D semplificati a scopo educativo; i valori sono tipici e indicativi, le sequenze di smontaggio sono semplificate.</footer>`)
   );
 
   const groups = explore.querySelector('.groups');
@@ -144,20 +173,23 @@ function renderHome(params = new URLSearchParams()) {
       if (!list.length) continue;
       shown += list.length;
       const g = h(`<div class="group">
-          <div class="group-head"><div class="cover"></div><h3>${esc(f.name)}</h3></div>
+          <div class="group-head"><div class="cover"></div><div><h3>${esc(f.name)}</h3><p>${esc(f.desc)}</p></div></div>
           <div class="cards"></div>
         </div>`);
-      setBgIfExists(g.querySelector('.cover'), f.image, 'background-image', true);
+      setBgIfExists(g.querySelector('.cover'), f.image, 'background-image');
       const cards = g.querySelector('.cards');
       for (const e of list) {
+        const st = engineStars(e.id);
         const c = h(`<a class="card" href="#/motore/${e.id}">
             <div class="thumb"></div>
             <div class="card-body">
               <h4>${esc(e.short)}</h4>
               <small>${esc(e.vehicle)}</small>
+              <p>${esc((META[e.id] || {}).tagline || '')}</p>
+              <div class="card-foot"><span class="card-stars ${st ? 'has' : ''}">${GICON.star}${st}/${MAX_STARS}</span><span class="card-go">Apri ${ICON.arrow}</span></div>
             </div>
           </a>`);
-        setBgIfExists(c.querySelector('.thumb'), `assets/thumbs/${e.id}.webp`, 'background-image', true);
+        setBgIfExists(c.querySelector('.thumb'), `assets/thumbs/${e.id}.webp`, 'background-image');
         cards.appendChild(c);
       }
       groups.appendChild(g);
@@ -173,13 +205,15 @@ function renderHome(params = new URLSearchParams()) {
   );
   search.addEventListener('input', render);
   render();
-  hero.querySelector('[data-scroll]').addEventListener('click', (e) => {
-    e.preventDefault();
-    explore.scrollIntoView({ behavior: 'smooth' });
-  });
+  app.querySelectorAll('[data-scroll]').forEach((a) =>
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      explore.scrollIntoView({ behavior: 'smooth' });
+    })
+  );
   if (params.get('famiglia')) requestAnimationFrame(() => explore.scrollIntoView());
 
-  const viewer = new EngineViewer(hero.querySelector('.stage-hero'), { interactive: false, autoRotate: true });
+  const viewer = new EngineViewer(hero.querySelector('.stage-hero'), { interactive: false, autoRotate: true, fx: true });
   loadEngine('petrol4t').then((def) => {
     viewer.load(def);
     viewer.setCutaway(true, true);
@@ -191,6 +225,7 @@ function renderHome(params = new URLSearchParams()) {
 // ---------- Engine page ----------
 // Model first: the 3D view fills the page; controls float over it with icons and one-word labels;
 // the long explanations live in a "Scopri di più" sheet that is closed by default.
+// The Officina button opens the workshop games (js/game/workshop.js), played on the same model.
 const firstSentence = (html) => {
   const t = String(html).replace(/<[^>]+>/g, '').trim();
   const m = t.match(/^.{20,}?[.!?](?=\s|$)/);
@@ -199,17 +234,20 @@ const firstSentence = (html) => {
 const isMobile = () => matchMedia('(max-width: 860px)').matches;
 const isTouch = () => matchMedia('(hover: none)').matches;
 
-async function renderEngine(id, preview = false) {
-  app.innerHTML = `<div class="engine-page"><div class="stage main"><div class="loading">Caricamento motore…</div></div></div>`;
+async function renderEngine(id, preview = false, params = new URLSearchParams()) {
+  document.body.classList.add('on-engine');
+  app.innerHTML = `<div class="engine-page"><div class="stage main"><div class="loading"><i></i>Caricamento motore…</div></div></div>`;
   let def;
   try {
     def = preview ? (await import(`./engines/${id}.js?t=${Date.now()}`)).default : await loadEngine(id);
   } catch (err) {
     console.error(err);
+    document.body.classList.remove('on-engine');
     app.innerHTML = `<div class="quiz-page"><h1>Motore non trovato</h1><p>${esc(err.message)}</p><a class="btn" href="#/">Torna alla home</a></div>`;
     return;
   }
   const page = app.querySelector('.engine-page');
+  if (!page) return; // navigated away while loading
   const stage = page.querySelector('.stage');
   stage.innerHTML = '';
   const fam = familyOf(def.id) || { name: def.family };
@@ -252,12 +290,17 @@ async function renderEngine(id, preview = false) {
       <button class="tool" data-act="explode" aria-pressed="false" title="Separa i pezzi (E)">${ICON.explode}<span>Esploso</span></button>
       <button class="tool" data-act="labels" aria-pressed="false" title="Mostra i nomi dei pezzi (L)">${ICON.tag}<span>Nomi</span></button>
       <button class="tool" data-act="reset" title="Rimetti il motore al centro (R)">${ICON.reset}<span>Centra</span></button>
+      <button class="tool play-tool" data-act="workshop" aria-pressed="false" title="Officina: guida e sfide di smontaggio (O)">${ICON.wrench}<span>Officina</span></button>
     </div>`);
   const bottom = h(`<div class="hud-bottom">
-      <div class="part-card" hidden><button class="x" aria-label="Chiudi">×</button><h4></h4><p></p></div>
+      <div class="part-card" hidden><button class="x" aria-label="Chiudi">×</button><h4></h4><p></p>
+        <div class="card-acts"><button class="act" data-act="remove" title="Togli questo pezzo (Canc)"></button></div>
+        <div class="card-msg" hidden></div>
+      </div>
+      <div class="removed-bar" hidden><span class="n"></span><button class="act icon" data-act="undo" title="Rimetti l’ultimo pezzo (U)" aria-label="Rimetti l’ultimo pezzo">${ICON.undo}</button><button class="act" data-act="restore" title="Rimetti tutti i pezzi tolti">${ICON.restore}<span>Rimetti tutto</span></button></div>
       <div class="caption">
         <button class="cap-nav" data-s="-1" aria-label="Fase precedente" title="Fase precedente (←)">${ICON.prev}</button>
-        <div class="cap-body"><div class="dots" role="tablist" aria-label="Fasi"></div><b class="cap-name"></b><p class="cap-text"></p></div>
+        <div class="cap-body"><div class="phase-steps" role="tablist" aria-label="Fasi"></div><div class="ws-dots" role="tablist" aria-label="Passi" hidden></div><b class="cap-name"></b><p class="cap-text"></p></div>
         <button class="cap-nav" data-s="1" aria-label="Fase successiva" title="Fase successiva (→)">${ICON.next}</button>
       </div>
       <div class="ctl-bar">
@@ -266,21 +309,25 @@ async function renderEngine(id, preview = false) {
           <div class="thr-top"><label for="thr">${esc(def.throttleLabel || 'Acceleratore')}</label><output class="g0"></output></div>
           <input id="thr" type="range" min="0" max="100" value="35">
         </div>
+        <div class="ws-info" hidden><b></b><small></small></div>
         <button class="info-btn" data-act="info" aria-expanded="false" title="Spiegazioni, dati e quiz (I)">${ICON.info}<span>Scopri di più</span></button>
       </div>
     </div>`);
   const tooltip = h(`<div class="tooltip" hidden></div>`);
+  const ctxMenu = h(`<div class="ctx-menu" role="menu" hidden></div>`);
   const labels = h(`<div class="labels" hidden></div>`);
   const touch = isTouch();
   const hints = h(`<div class="hints" hidden>
       <div>${ICON.reset}<span>${touch ? 'Trascina con un dito' : 'Trascina'} per girarlo</span></div>
       <div>${ICON.zoom}<span>${touch ? 'Due dita' : 'Rotella'} per lo zoom</span></div>
       <div>${ICON.tap}<span>${touch ? 'Tocca' : 'Clicca'} un pezzo per sapere cos’è</span></div>
+      <div>${ICON.wrench}<span>Officina: smontalo a tempo</span></div>
     </div>`);
   const TABS = [
     ['overview', 'Come funziona'],
     ['phases', 'Fasi'],
     ['parts', 'Pezzi'],
+    ...(def.disassembly ? [['workshop', 'Officina']] : []),
     ['quiz', 'Quiz'],
   ];
   const sheet = h(`<aside class="sheet" aria-label="Scopri di più">
@@ -290,19 +337,34 @@ async function renderEngine(id, preview = false) {
       </div>
       <div class="panel-body"></div>
     </aside>`);
-  stage.append(labels, top, readout, tools, tooltip, bottom, hints);
+  stage.append(labels, top, readout, tools, tooltip, bottom, hints, ctxMenu);
   page.append(sheet);
   top.querySelector('.engine-switch').addEventListener('change', (e) => (location.hash = `#/motore/${e.target.value}`));
 
   // ----- Layout: tools sit on the right on desktop, in the bottom stack on phones -----
   const caption = bottom.querySelector('.caption');
   let sheetOpen = false;
+  let ws = null; // the workshop games, created below
   const fitInsets = () => {
     const m = isMobile();
     if (m && tools.parentNode !== bottom) bottom.insertBefore(tools, caption);
     if (!m && tools.parentNode !== stage) stage.insertBefore(tools, tooltip);
     const sheetW = !m && sheetOpen ? sheet.offsetWidth : 0;
     page.style.setProperty('--sheet-w', `${sheetW}px`);
+    if (ws?.active) {
+      // In a game the HUD is the top strip, the bench and the tool belt.
+      const s = stage.getBoundingClientRect();
+      const gTop = ws.hud.querySelector('.g-top').getBoundingClientRect();
+      const belt = ws.el.belt.getBoundingClientRect();
+      const bench = ws.el.bench.getBoundingClientRect();
+      const benchOn = bench.width > 0;
+      viewer.setInsets(
+        m
+          ? { top: gTop.bottom - s.top, bottom: s.bottom - Math.min(belt.top, benchOn ? bench.top : belt.top) + 8 }
+          : { top: gTop.bottom - s.top, bottom: s.bottom - belt.top + 8, left: benchOn ? bench.right - s.left + 8 : 0, right: tools.offsetWidth + 24 }
+      );
+      return;
+    }
     viewer.setInsets(
       m
         ? { top: top.offsetTop + top.offsetHeight, bottom: bottom.offsetHeight + 8, right: 0 }
@@ -314,22 +376,46 @@ async function renderEngine(id, preview = false) {
   let onKey = () => {};
   cleanup = () => (insetObserver.disconnect(), document.removeEventListener('keydown', onKey), viewer.dispose());
 
-  // ----- Phases: dots + caption -----
-  const dots = bottom.querySelector('.dots');
+  // ----- Phases: numbered steps + caption -----
+  const steps = bottom.querySelector('.phase-steps');
   def.phases.forEach((p, i) => {
-    const b = h(`<button role="tab" title="${esc(p.name)}" aria-label="Fase ${i + 1}: ${esc(p.name)}"></button>`);
+    const b = h(`<button role="tab" title="${esc(p.name)}" aria-label="Fase ${i + 1}: ${esc(p.name)}"><i>${i + 1}</i><span>${esc(p.name)}</span></button>`);
     b.addEventListener('click', () => (viewer.goToPhase(i), syncPlay(), renderCaption()));
-    dots.appendChild(b);
+    steps.appendChild(b);
   });
+  steps.classList.toggle('many', def.phases.length > 5);
   const playBtn = bottom.querySelector('[data-act="play"]');
-  const syncPlay = () => (playBtn.innerHTML = viewer.state.paused || viewer.stepMode ? ICON.play : ICON.pause);
+  const guideDone = () => viewer.guideStatus.index >= viewer.guideStatus.steps.length;
+  const syncPlay = () => {
+    if (viewer.guide) {
+      const auto = viewer.autoplay !== 0;
+      playBtn.innerHTML = auto ? ICON.pause : guideDone() ? ICON.restore : ICON.play;
+      playBtn.title = auto ? 'Ferma (Spazio)' : guideDone() ? 'Rimonta tutto (Spazio)' : 'Smonta tutto da solo (Spazio)';
+      return;
+    }
+    playBtn.title = 'Pausa / riprendi (Spazio)';
+    playBtn.innerHTML = viewer.state.paused || viewer.stepMode ? ICON.play : ICON.pause;
+  };
   playBtn.addEventListener('click', () => {
+    if (viewer.guide) {
+      if (viewer.autoplay) viewer.stopAuto();
+      else if (guideDone()) viewer.restoreAll();
+      else viewer.autoDisassemble();
+      syncPlay();
+      return;
+    }
     if (viewer.stepMode) viewer.exitStepMode();
     else viewer.togglePaused();
     syncPlay();
     renderCaption();
   });
   const step = (d) => {
+    if (viewer.guide) {
+      if (viewer.autoplay) viewer.stopAuto();
+      if (d > 0) viewer.guideDemoNext();
+      else viewer.undo();
+      return;
+    }
     const base = viewer.phaseIndex < 0 ? (d > 0 ? -1 : 0) : viewer.phaseIndex;
     viewer.goToPhase(base + d);
     syncPlay();
@@ -339,10 +425,26 @@ async function renderEngine(id, preview = false) {
 
   const capName = bottom.querySelector('.cap-name');
   const capText = bottom.querySelector('.cap-text');
+  const wsDots = bottom.querySelector('.ws-dots');
   function renderCaption() {
+    if (viewer.guide) {
+      const { steps: gs, index, todo } = viewer.guideStatus;
+      [...wsDots.children].forEach((b, n) => (b.classList.toggle('done', n < index), b.classList.toggle('on', n === index)));
+      caption.classList.add('reading');
+      const st = gs[index];
+      if (!st) {
+        capName.textContent = 'Fatto!';
+        capText.innerHTML = 'Smontaggio completo. Con <b>‹</b> rimonti un pezzo alla volta, con il tasto arancione rimonti tutto. Pronto per la <b>sfida a tempo</b>?';
+        return;
+      }
+      const names = todo.map((p) => esc(p.name)).join(', ');
+      capName.textContent = `${index + 1}. ${st.name}`;
+      capText.innerHTML = `${txt(st)} <span class="cap-hint">Tocca: ${names}.</span>`;
+      return;
+    }
     const i = viewer.phaseIndex;
     const p = def.phases[i];
-    [...dots.children].forEach((b, k) => (b.classList.toggle('on', k === i), b.setAttribute('aria-selected', k === i)));
+    [...steps.children].forEach((b, k) => (b.classList.toggle('on', k === i), b.setAttribute('aria-selected', k === i)));
     const still = viewer.stepMode || viewer.state.paused;
     caption.classList.toggle('reading', !!(still && p));
     if (!p) {
@@ -350,7 +452,7 @@ async function renderEngine(id, preview = false) {
       capText.innerHTML = 'Premi <b>›</b> per seguirlo una fase alla volta.';
       return;
     }
-    capName.textContent = `${i + 1}. ${p.name}`;
+    capName.textContent = p.name;
     capText.innerHTML = still ? txt(p) : esc(firstSentence(txt(p)));
   }
   viewer.on('phase', () => {
@@ -360,8 +462,10 @@ async function renderEngine(id, preview = false) {
 
   // ----- Throttle -----
   const thr = bottom.querySelector('#thr');
-  thr.addEventListener('input', () => viewer.setThrottle(thr.value / 100));
+  const paintThr = () => thr.style.setProperty('--v', `${thr.value}%`);
+  thr.addEventListener('input', () => (viewer.setThrottle(thr.value / 100), paintThr()));
   viewer.setThrottle(thr.value / 100);
+  paintThr();
 
   // ----- View tools -----
   const viewBtns = [...tools.querySelectorAll('[data-view]')];
@@ -393,6 +497,7 @@ async function renderEngine(id, preview = false) {
     });
   };
   const setLabels = (on) => {
+    on = on && !ws?.active;
     labels.hidden = !on;
     labelBtn.setAttribute('aria-pressed', on);
     if (on) buildLabels();
@@ -414,12 +519,12 @@ async function renderEngine(id, preview = false) {
   infoBtn.addEventListener('click', () => setSheet(!sheetOpen));
   sheet.querySelector('.x').addEventListener('click', () => setSheet(false));
 
-  // ----- First visit: three quick hints instead of written instructions -----
+  // ----- First visit: quick hints instead of written instructions -----
   let hintsSeen = false;
   try {
     hintsSeen = localStorage.getItem('motorilab-hints') === '1';
   } catch {}
-  if (!hintsSeen) {
+  if (!hintsSeen && !params.get('gioca')) {
     hints.hidden = false;
     const done = () => {
       hints.classList.add('out');
@@ -437,6 +542,8 @@ async function renderEngine(id, preview = false) {
   onKey = (e) => {
     if (e.target.closest('input, select, textarea') || e.ctrlKey || e.metaKey || e.altKey) return;
     const k = e.key.toLowerCase();
+    if (ws.key(k)) return e.preventDefault();
+    if (ws.active && k === ' ') return e.preventDefault();
     if (k === ' ') playBtn.click();
     else if (k === 'arrowright') step(1);
     else if (k === 'arrowleft') step(-1);
@@ -445,7 +552,10 @@ async function renderEngine(id, preview = false) {
     else if (k === 'l') setLabels(labels.hidden);
     else if (k === 'r') viewer.resetCamera();
     else if (k === 'i' || k === '?') setSheet(!sheetOpen);
-    else if (k === 'escape') sheetOpen ? setSheet(false) : viewer.selectPart(null);
+    else if (k === 'o') wsBtn.click();
+    else if (k === 'u') viewer.undo();
+    else if (k === 'escape') !ctxMenu.hidden ? closeMenu() : viewer.guide ? setGuide(false) : sheetOpen ? setSheet(false) : viewer.selectPart(null);
+    else if ((k === 'delete' || k === 'backspace') && viewer.selected) viewer.removePart(viewer.selected.id);
     else if (k === '[') location.hash = `#/motore/${prev.id}`;
     else if (k === ']') location.hash = `#/motore/${next.id}`;
     else return;
@@ -486,7 +596,7 @@ async function renderEngine(id, preview = false) {
       tooltip.style.top = e.clientY - r.top + 'px';
     });
     viewer.on('hover', (p) => {
-      tooltip.hidden = !p;
+      tooltip.hidden = !p || ws.hidesNames;
       if (p) tooltip.textContent = p.name;
     });
   }
@@ -495,16 +605,150 @@ async function renderEngine(id, preview = false) {
   const card = bottom.querySelector('.part-card');
   const renderCard = () => {
     const p = viewer.selected;
-    card.hidden = !p;
-    if (!p) return;
+    card.hidden = !p || ws.active;
+    if (card.hidden) return;
     card.querySelector('h4').textContent = p.name;
     card.querySelector('p').innerHTML = txt(p);
+    const screw = viewer.motionOf(p.id) === 'unscrew';
+    removeBtn.innerHTML = `${screw ? ICON.screw : ICON.lift}<span>${screw ? 'Svita' : 'Togli'}</span>`;
+    cardMsg.hidden = true; // the "take off first" note is shown again by the next 'blocked'
   };
+  const removeBtn = card.querySelector('[data-act="remove"]');
+  const cardMsg = card.querySelector('.card-msg');
+  // Tried to take off a part that is still held: say what to take off first; tapping a name selects it.
+  viewer.on('blocked', ({ part, blockers }) => {
+    if (ws.active) return;
+    if (viewer.selected !== part) viewer.selectPart(part.id);
+    cardMsg.hidden = false;
+    cardMsg.innerHTML = `<span>Prima togli</span>${blockers.map((b) => `<button class="chip" data-id="${esc(b.id)}">${esc(b.name)}</button>`).join('')}`;
+    cardMsg.querySelectorAll('[data-id]').forEach((b) => b.addEventListener('click', () => viewer.selectPart(b.dataset.id)));
+  });
   card.querySelector('.x').addEventListener('click', () => viewer.selectPart(null));
+  removeBtn.addEventListener('click', () => viewer.selected && viewer.removePart(viewer.selected.id));
   viewer.on('select', () => {
     renderCard();
-    if (activeTab === 'parts') renderPanel();
+    if (activeTab === 'parts' && !ws.active) renderPanel();
   });
+
+  // ----- Taking parts off (free exploration and the guide) -----
+  const removedBar = bottom.querySelector('.removed-bar');
+  removedBar.querySelector('[data-act="restore"]').addEventListener('click', () => viewer.restoreAll());
+  removedBar.querySelector('[data-act="undo"]').addEventListener('click', () => viewer.undo());
+  viewer.on('parts', (removed) => {
+    if (ws.active) return;
+    const n = removed.length;
+    const was = !removedBar.hidden;
+    removedBar.hidden = !n || !!viewer.guide;
+    removedBar.querySelector('.n').textContent = n === 1 ? '1 pezzo tolto' : `${n} pezzi tolti`;
+    if (was !== !removedBar.hidden) fitInsets();
+    if (!labels.hidden) buildLabels();
+    if (activeTab === 'parts' || activeTab === 'workshop') renderPanel();
+    if (viewer.guide) {
+      syncPlay();
+      renderCaption();
+    }
+  });
+
+  // Right click on the model (desktop): small menu with the same actions.
+  const closeMenu = () => (ctxMenu.hidden = true);
+  viewer.on('context', ({ part, x, y }) => {
+    if (ws.active) return;
+    const items = [];
+    if (part) {
+      const screw = viewer.motionOf(part.id) === 'unscrew';
+      items.push(`<button role="menuitem" data-act="remove">${screw ? ICON.screw : ICON.lift}<span>${screw ? 'Svita' : 'Togli'} <b>${esc(part.name)}</b></span></button>`);
+    }
+    if (viewer.removedParts.length) {
+      items.push(`<button role="menuitem" data-act="undo">${ICON.undo}<span>Rimetti l’ultimo</span></button>`);
+      items.push(`<button role="menuitem" data-act="restore">${ICON.restore}<span>Rimetti tutto</span></button>`);
+    }
+    if (!items.length) return closeMenu();
+    ctxMenu.innerHTML = items.join('');
+    ctxMenu.hidden = false;
+    const r = stage.getBoundingClientRect();
+    const mx = Math.min(x - r.left, r.width - ctxMenu.offsetWidth - 8);
+    const my = Math.min(y - r.top, r.height - ctxMenu.offsetHeight - 8);
+    ctxMenu.style.left = `${Math.max(8, mx)}px`;
+    ctxMenu.style.top = `${Math.max(8, my)}px`;
+    ctxMenu.querySelector('[data-act="remove"]')?.addEventListener('click', () => (viewer.removePart(part.id), closeMenu()));
+    ctxMenu.querySelector('[data-act="undo"]')?.addEventListener('click', () => (viewer.undo(), closeMenu()));
+    ctxMenu.querySelector('[data-act="restore"]')?.addEventListener('click', () => (viewer.restoreAll(), closeMenu()));
+    ctxMenu.querySelector('button').focus({ preventScroll: true });
+  });
+  stage.addEventListener('pointerdown', (e) => !ctxMenu.contains(e.target) && closeMenu(), true);
+  stage.addEventListener('wheel', closeMenu, { passive: true });
+  ctxMenu.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // ----- Officina: the guide (a walkthrough over the free disassembly) and the games -----
+  const wsBtn = tools.querySelector('[data-act="workshop"]');
+  const wsInfo = bottom.querySelector('.ws-info');
+  const thrBox = bottom.querySelector('.thr');
+  const setGuide = (on) => {
+    if (!def.disassembly?.steps || on === !!viewer.guide) return;
+    if (on) {
+      setExploded(false);
+      setView(false); // a real engine on the bench: closed
+      closeMenu();
+    }
+    viewer.setGuide(on);
+  };
+  ws = new Workshop({
+    viewer,
+    def,
+    stage,
+    page,
+    txt,
+    ui: {
+      setView,
+      setExploded,
+      setLabels,
+      startGuide: () => setGuide(true),
+      // A game started or ended: the HUD changed, so re-frame the model in the free area.
+      layout: () => {
+        closeMenu();
+        renderCard();
+        removedBar.hidden = true;
+        tooltip.hidden = true;
+        if (sheetOpen && ws.active) setSheet(false);
+        requestAnimationFrame(() => {
+          fitInsets();
+          viewer.resetCamera();
+        });
+        syncPlay();
+        renderCaption();
+      },
+    },
+  });
+  window.__ws = ws; // debugging, like __viewer
+  wsBtn.addEventListener('click', () => {
+    if (viewer.guide) return setGuide(false);
+    if (ws.menuOpen) return ws.closeMenu();
+    ws.openMenu();
+  });
+  viewer.on('guide', (g) => {
+    const on = !!g;
+    wsBtn.setAttribute('aria-pressed', on);
+    page.classList.toggle('guiding', on);
+    steps.hidden = on;
+    wsDots.hidden = !on;
+    thrBox.hidden = on;
+    wsInfo.hidden = !on;
+    if (on && !wsDots.children.length)
+      def.disassembly.steps.forEach((st, i) => wsDots.appendChild(h(`<span role="presentation" title="${i + 1}. ${esc(st.name)}"></span>`)));
+    removedBar.hidden = on || !viewer.removedParts.length;
+    syncPlay();
+    renderCaption();
+    fitInsets();
+  });
+  const syncGuideInfo = () => {
+    if (!viewer.guide) return;
+    const { steps: gs, index } = viewer.guideStatus;
+    wsInfo.querySelector('b').textContent = index < gs.length ? `Passo ${index + 1} di ${gs.length}` : 'Smontato';
+    wsInfo.querySelector('small').textContent = 'Guida semplificata';
+    wsInfo.title = def.disassembly.note || '';
+  };
+  viewer.on('parts', syncGuideInfo);
+  viewer.on('guide', syncGuideInfo);
 
   // ----- Sheet content -----
   let activeTab = 'overview';
@@ -551,7 +795,7 @@ async function renderEngine(id, preview = false) {
         <h3>Dove lo trovi</h3><p class="note">${esc(def.examples || def.vehicle)}</p>
         <div class="kbd-help"><h3>Da tastiera</h3><p class="note">
           <kbd>Spazio</kbd> pausa · <kbd>←</kbd><kbd>→</kbd> fasi · <kbd>V</kbd> chiusa/sezione · <kbd>E</kbd> esploso ·
-          <kbd>L</kbd> nomi · <kbd>R</kbd> centra · <kbd>I</kbd> questo pannello · <kbd>[</kbd><kbd>]</kbd> altro motore</p></div>`;
+          <kbd>L</kbd> nomi · <kbd>R</kbd> centra · <kbd>Canc</kbd> togli pezzo · <kbd>O</kbd> officina · <kbd>I</kbd> questo pannello · <kbd>[</kbd><kbd>]</kbd> altro motore</p></div>`;
       body.querySelectorAll('[data-opt]').forEach((b) =>
         b.addEventListener('click', () => {
           viewer.setOption(b.dataset.opt, b.dataset.val);
@@ -577,6 +821,22 @@ async function renderEngine(id, preview = false) {
       body.querySelectorAll('[data-id]').forEach((b) =>
         b.addEventListener('click', () => viewer.selectPart(viewer.selected?.id === b.dataset.id ? null : b.dataset.id))
       );
+    } else if (activeTab === 'workshop') {
+      const { steps: gs, index } = viewer.guideStatus;
+      body.innerHTML = `<p class="note">${esc(def.disassembly.note || '')}</p>
+        <p>Tocca un pezzo e premi <b>Togli</b> (o <b>Svita</b>, per viti e candele): se è ancora fissato, la scheda ti dice cosa togliere prima.
+        La <b>guida</b> suggerisce un ordine e illumina i pezzi da toccare; nelle <b>sfide</b> lo fai tu, con gli attrezzi e il cronometro.</p>
+        <div class="cta ws-cta"><button class="btn primary ws-start">${viewer.guide ? 'Esci dalla guida' : 'Apri la guida'}</button>
+        <button class="btn hazard ws-play">${ICON.wrench} Sfide</button></div>
+        <ol class="phase-list ws-list">${gs
+          .map(
+            (st, i) => `<li class="${viewer.guide && i === index ? 'on' : ''}${i < index ? ' done' : ''}"><div class="step-h"><span class="n">${i + 1}</span><b>${esc(
+              st.name
+            )}</b></div><div class="txt">${txt(st)}</div></li>`
+          )
+          .join('')}</ol>`;
+      body.querySelector('.ws-start').addEventListener('click', () => (setGuide(!viewer.guide), renderPanel()));
+      body.querySelector('.ws-play').addEventListener('click', () => (setGuide(false), ws.openMenu()));
     } else if (activeTab === 'quiz') {
       renderQuizInto(body, def.quiz, quizState, () => renderPanel(), def.short);
     }
@@ -587,8 +847,15 @@ async function renderEngine(id, preview = false) {
   try {
     wantSheet = localStorage.getItem('motorilab-sheet') === '1' && !isMobile();
   } catch {}
-  if (wantSheet) setSheet(true);
+  const play = params.get('gioca');
+  if (wantSheet && !play) setSheet(true);
   else fitInsets();
+  // Deep link from the home page: #/motore/<id>?gioca=menu|strip|build|hunt
+  if (play) {
+    history.replaceState(null, '', `#/motore/${def.id}`);
+    if (play === 'menu' || (play !== 'hunt' && !ws.hasRules)) ws.openMenu();
+    else ws.start(play);
+  }
   levelListeners.add(() => {
     renderPanel();
     renderCaption();

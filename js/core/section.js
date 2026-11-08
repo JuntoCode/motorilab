@@ -137,7 +137,7 @@ export class SectionCaps {
   update(constant) {
     const on = constant < 50;
     this.cap.visible = on && this.helpers.length > 0;
-    for (const h of this.helpers) h.visible = on;
+    for (const h of this.helpers) h.visible = on && !h.userData.muted;
     this.cap.position.z = constant;
   }
 

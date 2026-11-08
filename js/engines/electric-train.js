@@ -2,6 +2,7 @@
 // 3-phase asynchronous (induction) motor -> gearbox -> wheelset in a bogie, on rails.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MAT, cut, lathe, pipe, flow, clamp } from '../core/helpers.js';
 
 const TAU = Math.PI * 2;
@@ -67,6 +68,10 @@ function tube(points, r, mat, seg = 32) {
 
 // Instanced hex bolt heads. items: [[x,y,z],[nx,ny,nz]] (position, outward normal).
 const HEX = new THREE.CylinderGeometry(0.011, 0.011, 0.01, 6);
+// Hex head + shank of length `len` below it (local -Y): the screws of the Officina fastener parts,
+// which back out along their own +Y.
+const screw = (len, r = 0.014, h = 0.012) =>
+  mergeGeometries([new THREE.CylinderGeometry(r, r, h, 6), new THREE.CylinderGeometry(r * 0.6, r * 0.6, len, 8).translate(0, -h / 2 - len / 2, 0)]);
 function bolts(mat, items, geo = HEX) {
   const im = new THREE.InstancedMesh(geo, mat, items.length);
   const m4 = new THREE.Matrix4();
@@ -391,6 +396,87 @@ export default {
         "L'inverter porta la frequenza del campo sotto la velocità del rotore (scorrimento negativo): il motore diventa un generatore, frena il treno e rimanda energia in catenaria per altri treni.",
     },
   ],
+  // Officina (see CONTRACT.md): the traction motor and its gear unit come apart; track, wheelset, bogie,
+  // car body and overhead line stay as the surroundings. Simplified and educational, not a workshop manual.
+  // The wheels leave no room along the motor axis, so parts leave upwards and towards the viewer.
+  disassembly: {
+    intro: 'Smontiamo il motore di trazione e il suo riduttore, fino a sfilare il rotore dallo statore.',
+    note:
+      'Sequenza semplificata a scopo didattico: nella realtà il motore viene prima staccato dal carrello e revisionato al banco, seguendo il manuale del costruttore e le procedure di sicurezza elettrica.',
+    parts: {
+      pressacavi: { motion: 'unscrew', turns: 4, out: 0.05, dir: [0, 1, 0.3], dist: 0.3 },
+      cavi: { after: ['pressacavi'], dir: [0, 1, 0.35], dist: 0.7 },
+      vitiCassaRiduttore: { motion: 'unscrew', turns: 5, out: 0.045, dir: [0.2, 0.5, 1], dist: 0.35 },
+      cassaRiduttore: { after: ['vitiCassaRiduttore'], dir: [0.1, 0.25, 1], dist: 1.0 },
+      riduttore: { after: ['cassaRiduttore'], dir: [0, 0.25, 1], dist: 0.9 },
+      vitiScudoDE: { after: ['cavi', 'riduttore'], motion: 'unscrew', turns: 5, out: 0.07, dir: [0.4, 0.5, 1], dist: 0.3 },
+      scudoDE: { after: ['vitiScudoDE'], dir: [0.25, 0.6, 0.8], dist: 0.9 },
+      vitiScudoNDE: { after: ['cavi'], motion: 'unscrew', turns: 5, out: 0.07, dir: [-0.4, 0.5, 1], dist: 0.3 },
+      scudoNDE: { after: ['vitiScudoNDE'], dir: [-0.25, 0.6, 0.8], dist: 0.9 },
+      cuscinetti: { after: ['scudoDE', 'scudoNDE'], dir: [0, 0.5, 1], dist: 0.6 },
+      rotore: { after: ['cuscinetti'], with: ['albero'], dir: [1, 0.42, 0.5], dist: 1.0, duration: 1.2 },
+      albero: { after: ['cuscinetti'], with: ['rotore'], dir: [1, 0.42, 0.5], dist: 1.0, duration: 1.2 },
+    },
+    steps: [
+      {
+        id: 'cables',
+        name: 'Stacca i cavi',
+        base:
+          "Prima di tutto si abbassa il pantografo e la linea viene messa a terra: solo quando non c'è più tensione si allentano i pressacavi e si sfilano i tre cavi dalla morsettiera.",
+        expert:
+          'Togliere tensione e mettere a terra viene prima di ogni lavoro; anche i condensatori del circuito intermedio (DC link) devono essere scarichi. I cavi U, V, W si contrassegnano: scambiarne due al rimontaggio invertirebbe il senso di rotazione del motore.',
+        parts: ['pressacavi', 'cavi'],
+      },
+      {
+        id: 'gearcase',
+        name: 'Apri la scatola del riduttore',
+        base: "Si svitano le viti lungo il bordo e si toglie la scatola che protegge gli ingranaggi e contiene il loro olio.",
+        expert:
+          "Prima si scarica l'olio dal tappo in basso. La scatola è fatta di due semigusci uniti dalla fila di viti: una volta aperta si possono controllare i denti degli ingranaggi.",
+        parts: ['vitiCassaRiduttore', 'cassaRiduttore'],
+      },
+      {
+        id: 'gears',
+        name: 'Togli gli ingranaggi',
+        base: "Si tolgono il pignone, il piccolo ingranaggio sull'albero del motore, e la grande corona dentata che fa girare le ruote.",
+        expert:
+          "Nella realtà pignone e corona sono calettati a caldo o a pressione sull'albero e sull'asse: per toglierli servono estrattori idraulici o una pressa. Sui denti si cercano usura e piccoli crateri (pitting).",
+        parts: ['riduttore'],
+      },
+      {
+        id: 'shieldDE',
+        name: 'Togli lo scudo lato trasmissione',
+        base: 'Si svita il cerchio di viti e si stacca il coperchio del motore dal lato degli ingranaggi: dietro compaiono le bobine di rame e il rotore.',
+        expert:
+          'Lo scudo si incastra con precisione nella carcassa (centraggio): è lui a tenere il rotore al centro dello statore, con un traferro di appena un paio di millimetri. È pesante e si sostiene con un paranco.',
+        parts: ['vitiScudoDE', 'scudoDE'],
+      },
+      {
+        id: 'shieldNDE',
+        name: 'Togli lo scudo lato opposto',
+        base: "Dall'altra parte si scollega il sensore di giri, si svitano le viti e si toglie il secondo coperchio.",
+        expert:
+          "Il sensore di velocità va trattato con cura: è dal suo segnale che l'inverter regola la coppia e corregge gli slittamenti. Da questo lato compare la ventola interna montata sul rotore.",
+        parts: ['vitiScudoNDE', 'scudoNDE'],
+      },
+      {
+        id: 'bearings',
+        name: 'Sfila i cuscinetti',
+        base: "Con un estrattore si tolgono i due cuscinetti dalle estremità dell'albero.",
+        expert:
+          "Si osservano piste e sfere: piccoli crateri o rigature regolari sono il segno delle correnti d'albero. In revisione i cuscinetti di norma si sostituiscono e il grasso si rinnova.",
+        parts: ['cuscinetti'],
+      },
+      {
+        id: 'rotor',
+        name: 'Sfila il rotore',
+        base: 'Si estrae il rotore con il suo albero, tenendolo sollevato perché non strisci sulle bobine. Nella carcassa restano lo statore e gli avvolgimenti di rame.',
+        expert:
+          "Il rotore pesa oltre cento chilogrammi e va guidato con un'attrezzatura di sostegno, perché lo spazio tra rotore e statore è minimo. Lo statore resta nella carcassa, dove il pacco di lamierini è bloccato stabilmente; sugli avvolgimenti si misura la resistenza di isolamento.",
+        parts: ['rotore'],
+      },
+    ],
+  },
   camera: { position: [5.0, 2.7, 6.4], target: [-0.1, 0.35, -0.45] },
 
   build(ctx) {
@@ -605,7 +691,6 @@ export default {
       casing.add(sealA, sealP);
     }
     const boltPts = drawHull(new THREE.Shape(), r1 - 0.016, r2 - 0.016).getSpacedPoints(28).slice(0, 28);
-    casing.add(bolts(boltCut, boltPts.map((p) => [[0.115, p.y, -p.x], [1, 0, 0]])));
     casing.add(new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.022, 0.06, 12), casMat).translateY(YM + r2 + 0.02).translateZ(-0.05)); // breather
     casing.add(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.03, 6), casMat).translateY(-r1 - 0.005).translateZ(-0.08));   // drain plug
     const glass = new THREE.Mesh(alongX(new THREE.CylinderGeometry(0.03, 0.03, 0.012, 20)), MAT.glow(0xd29a2a, 0.35));
@@ -618,6 +703,17 @@ export default {
       base: "La scatola chiusa che contiene gli ingranaggi e l'olio che li lubrifica. La spia permette di controllare il livello dell'olio.",
       expert:
         "Carter in ghisa o alluminio in due semigusci imbullonati, lubrificazione a sbattimento d'olio, tenute a labirinto sull'asse e sul pignone, sfiato in alto e tappo di scarico in basso. Una biella di reazione sul carrello impedisce al carter di ruotare attorno all'asse.",
+      explode: [0.25, 0, 0.95],
+    });
+    // Rim screws of the casing (their own part: the Officina wrench takes them out).
+    const caseScrews = bolts(boltCut, boltPts.map((p) => [[0.116, p.y, -p.x], [1, 0, 0]]), screw(0.05));
+    caseScrews.position.x = GEAR_X;
+    add(caseScrews, {
+      id: 'vitiCassaRiduttore',
+      name: 'Viti della scatola del riduttore',
+      base: "La fila di viti che corre lungo il bordo della scatola del riduttore: la tengono chiusa, così l'olio resta dentro.",
+      expert:
+        "Viti distribuite a passo regolare lungo tutto il contorno, in modo che la giunzione tra i due semigusci sia premuta in modo uniforme e l'olio non trafili.",
       explode: [0.25, 0, 0.95],
     });
 
@@ -647,9 +743,6 @@ export default {
     housing.add(rbox(0.28, 0.14, 0.24, 0.02, tbMat, 0.2, 0.43, -0.12));
     housing.add(rbox(0.3, 0.02, 0.26, 0.008, tbMat, 0.2, 0.505, -0.12));
     housing.add(bolts(boltMat, [[0.07, -0.23], [0.33, -0.23], [0.07, -0.01], [0.33, -0.01]].map(([x, z]) => [[x, 0.518, z], [0, 1, 0]])));
-    const glandGeo = new THREE.CylinderGeometry(0.022, 0.026, 0.04, 12);
-    const glandMat = MAT.brass();
-    for (let k = 0; k < 3; k++) housing.add(new THREE.Mesh(glandGeo, glandMat).translateX(0.12 + k * 0.08).translateY(0.53).translateZ(-0.12));
     const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.0875), new THREE.MeshStandardMaterial({ map: plateTexture(), metalness: 0.4, roughness: 0.45 }));
     plate.position.set(0.2, 0.43, 0.002);
     housing.add(plate);
@@ -671,14 +764,30 @@ export default {
         "Carcassa in acciaio saldato, appesa al telaio del carrello con due attacchi. Raffreddamento a ventilazione forzata: un ventilatore in cassa soffia aria attraverso il motore; isolamento in classe 200 °C. Massa tipica ~600-700 kg per 600 kW (≈ 1 kW/kg).",
       explode: [0, 1.0, 0],
     });
+    // Cable glands on the terminal box lid: hex nut on a threaded body, one per phase cable.
+    const glandGeo = mergeGeometries([
+      new THREE.CylinderGeometry(0.03, 0.03, 0.022, 6),
+      new THREE.CylinderGeometry(0.023, 0.026, 0.036, 12).translate(0, -0.029, 0),
+    ]);
+    const glands = bolts(MAT.brass(), [0, 1, 2].map((k) => [[0.12 + k * 0.08, 0.558, -0.12], [0, 1, 0]]), glandGeo);
+    glands.position.set(X0, YM, 0);
+    add(glands, {
+      id: 'pressacavi',
+      name: 'Pressacavi della morsettiera',
+      base: 'Tre dadi di ottone che stringono i cavi nel punto in cui entrano nella morsettiera: li tengono fermi e non lasciano passare acqua e polvere.',
+      expert:
+        'Il pressacavo comprime una guarnizione attorno alla guaina del cavo: fa da tenuta e scarica gli sforzi di trazione. Dentro la morsettiera i capicorda dei tre cavi sono imbullonati ai morsetti U, V, W.',
+      explode: [0, 1.0, 0],
+    });
 
     // ================= End shields =================
     const shieldMat = cut(MAT.castIron());
     const shieldGeo = alongX(lathe(SHIELD_PROFILE, 56));
-    const shieldBolts = boltRingX(0.04, 0.355, 16, 1, 0.1);
+    const shieldScrewGeo = screw(0.06);
+    const shieldBolts = boltRingX(0.045, 0.355, 16, 1, 0.1);
     const shieldDE = new THREE.Group();
     shieldDE.position.set(X0 + 0.45, YM, 0);
-    shieldDE.add(new THREE.Mesh(shieldGeo, shieldMat), bolts(boltCut, shieldBolts));
+    shieldDE.add(new THREE.Mesh(shieldGeo, shieldMat));
     shieldDE.add(new THREE.Mesh(alongX(pipe(0.11, 0.05, 0.02, 32)), shieldMat).translateX(0.125));
     add(shieldDE, {
       id: 'scudoDE',
@@ -688,11 +797,21 @@ export default {
         'Scudo in ghisa con sede del cuscinetto (spesso a rulli cilindrici lato trasmissione, per reggere il carico radiale del pignone) e tenute contro polvere e olio.',
       explode: [0.1, 0, 0.8],
     });
+    const screwsDE = bolts(boltCut, shieldBolts, shieldScrewGeo);
+    screwsDE.position.copy(shieldDE.position);
+    add(screwsDE, {
+      id: 'vitiScudoDE',
+      name: 'Viti dello scudo lato trasmissione',
+      base: 'Sedici viti disposte in cerchio che fissano lo scudo alla carcassa del motore.',
+      expert:
+        'Corona di viti sulla flangia: strette in modo uniforme tengono lo scudo centrato sulla carcassa, e con lui il cuscinetto e il rotore al centro dello statore.',
+      explode: [0.1, 0, 0.8],
+    });
 
     const shieldNDE = new THREE.Group();
     shieldNDE.position.set(X0 - 0.45, YM, 0);
     shieldNDE.rotation.y = Math.PI; // mirrored: +local axial points to -X
-    shieldNDE.add(new THREE.Mesh(shieldGeo, shieldMat), bolts(boltCut, shieldBolts));
+    shieldNDE.add(new THREE.Mesh(shieldGeo, shieldMat));
     const encMat = MAT.paint(0x1f2328, 0.5);
     shieldNDE.add(new THREE.Mesh(alongX(new THREE.CylinderGeometry(0.07, 0.07, 0.05, 24)), encMat).translateX(0.14));
     shieldNDE.add(new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.04, 10).rotateX(Math.PI / 2), encMat).translateX(0.15).translateZ(0.075));
@@ -703,6 +822,17 @@ export default {
       base: 'Il coperchio dal lato opposto. Porta il secondo cuscinetto e il sensore che conta i giri del motore, collegato con un cavo.',
       expert:
         "Ospita un cuscinetto isolato e il sensore di velocità (ruota fonica/encoder), indispensabile all'inverter per il controllo vettoriale della coppia e per l'antislittamento.",
+      explode: [-0.5, 0, 0],
+    });
+    const screwsNDE = bolts(boltCut, shieldBolts, shieldScrewGeo);
+    screwsNDE.position.copy(shieldNDE.position);
+    screwsNDE.rotation.y = Math.PI;
+    add(screwsNDE, {
+      id: 'vitiScudoNDE',
+      name: 'Viti dello scudo lato opposto',
+      base: 'Le sedici viti in cerchio che fissano il secondo scudo, dal lato del sensore di giri.',
+      expert:
+        "Come dall'altro lato, la corona di viti stringe lo scudo sulla flangia della carcassa; tra le due superfici una guarnizione tiene fuori polvere e umidità.",
       explode: [-0.5, 0, 0],
     });
 

@@ -3,6 +3,7 @@
 // The thruster is built along local +Y (lathe-friendly) and turned so the beam points to world +X.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MAT, cut, lathe, flow, clamp, lerp } from '../core/helpers.js';
 
 // ---------- Thruster stations (local frame: axis +Y, beam towards +Y) ----------
@@ -16,6 +17,8 @@ const A_GRID = 0.92; // grid dish radius
 const SAG = RS - Math.sqrt(RS * RS - A_GRID * A_GRID);
 const Y_SCREEN = Y_FRONT + SAG; // screen grid apex
 const Y_ACCEL = Y_FRONT + 0.04 + SAG; // accel grid apex
+const R_RING = A_GRID + 0.13; // grid mounting rings, outer radius
+const R_SCR = R_CH + 0.124; // plasma screen sleeve (slips over the rear shell)
 const BEAM_L = 3.3;
 const BEAM_DIV = Math.tan((12 * Math.PI) / 180);
 const NEUT = [-1.2, 0.42]; // neutralizer base (local x, y)
@@ -52,6 +55,21 @@ function strut(a, b, r, mat) {
   const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, d.length(), 10), mat);
   m.position.copy(a).add(b).multiplyScalar(0.5);
   m.quaternion.setFromUnitVectors(V(0, 1, 0), d.normalize());
+  return m;
+}
+
+// Hex head + shank below it (local -Y), so a screw backing out of its hole shows the shank.
+const screw = (len, r = 0.02, h = 0.016) =>
+  mergeGeometries([new THREE.CylinderGeometry(r, r, h, 6), new THREE.CylinderGeometry(r * 0.6, r * 0.6, len, 8).translate(0, -h / 2 - len / 2, 0)]);
+// One InstancedMesh of fasteners from [position, direction out of the hole] pairs (local +Y -> direction).
+function fasteners(geo, mat, list) {
+  const m = new THREE.InstancedMesh(geo, mat, list.length);
+  const mtx = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const one = V(1, 1, 1);
+  list.forEach(([p, d], i) => m.setMatrixAt(i, mtx.compose(p, q.setFromUnitVectors(V(0, 1, 0), d.clone().normalize()), one)));
+  m.instanceMatrix.needsUpdate = true;
+  m.computeBoundingSphere();
   return m;
 }
 
@@ -406,6 +424,7 @@ export default {
     const cableRed = MAT.paint(0xa8322a, 0.6);
     const ppuMat = MAT.paint(0x4b5563, 0.5);
     const finMat = MAT.aluminum();
+    const screwMat = cut(MAT.steel(), { cap: false });
 
     // ---------- Spacecraft bus (context, not clickable) ----------
     // Hollow box of MLI-covered panels; the +X side is the aluminium thruster mounting panel.
@@ -420,7 +439,6 @@ export default {
     };
     const B = (w, h, d) => new THREE.BoxGeometry(w, h, d);
     addBox(B(bw, 2 * BY, BT), goldMLI, bcx, 0, -BZ + BT / 2);
-    addBox(B(bw, 2 * BY, BT), goldMLI, bcx, 0, BZ - BT / 2);
     addBox(B(bw, BT, 2 * BZ - 2 * BT), goldMLI, bcx, BY - BT / 2, 0);
     addBox(B(bw, BT, 2 * BZ - 2 * BT), goldMLI, bcx, -BY + BT / 2, 0);
     addBox(B(BT, 2 * BY - 2 * BT, 2 * BZ - 2 * BT), goldMLI, x0 + BT / 2, 0, 0);
@@ -443,6 +461,35 @@ export default {
       [V(x1 + 0.01, 0, -0.8), L2W(0, -0.6, -0.8)],
     ])
       root.add(strut(a, b, 0.025, dark));
+
+    // ---------- Access panel (the +Z side of the bus) and its screws ----------
+    const hatch = new THREE.Mesh(B(bw, 2 * BY, BT), goldMLI);
+    hatch.position.set(bcx, 0, BZ - BT / 2);
+    addPart(root, hatch, {
+      id: 'busPanel',
+      name: 'Pannello di accesso',
+      base:
+        'Una parete della sonda che si può svitare e togliere per raggiungere serbatoio, valvole ed elettronica. È ricoperta da una “coperta” dorata a più strati, che la protegge dal caldo e dal freddo dello spazio.',
+      expert:
+        'Pannello strutturale a sandwich (pelli in alluminio o fibra di carbonio su nido d’ape di alluminio) rivestito di MLI (Multi-Layer Insulation): decine di fogli sottilissimi di Kapton o Mylar alluminato, separati da reticelle, che riducono lo scambio di calore per irraggiamento. ' +
+        'Le viti si avvitano in inserti filettati incollati nel nido d’ape.',
+      explode: [0, 0, 0.8],
+    });
+    const hatchPts = [];
+    for (const sy of [-1, 1]) {
+      for (let i = 0; i < 4; i++) hatchPts.push([V(x0 + 0.14 + (i * (bw - 0.28)) / 3, sy * (BY - 0.11), BZ + 0.008), V(0, 0, 1)]);
+      for (const x of [x0 + 0.14, x1 - 0.14]) hatchPts.push([V(x, sy * 0.3, BZ + 0.008), V(0, 0, 1)]);
+    }
+    addPart(root, fasteners(screw(0.07, 0.026), screwMat, hatchPts), {
+      id: 'panelScrews',
+      name: 'Viti del pannello di accesso',
+      base:
+        'Le viti che fissano il pannello alla struttura della sonda. Su un satellite ogni vite è “frenata”, perché le vibrazioni del lancio non la allentino.',
+      expert:
+        'Viti in titanio o acciaio inossidabile con filetto autofrenante, serrate a coppia controllata e registrata. ' +
+        'In camera pulita ogni vite tolta viene contata e messa da parte: un oggetto dimenticato a bordo, in assenza di peso, può finire ovunque.',
+      explode: [0, 0, 1.1],
+    });
 
     // ---------- Xenon tank ----------
     const tank = new THREE.Group();
@@ -501,6 +548,25 @@ export default {
       expert:
         'Lo XFC (Xenon Flow Controller) abbassa la pressione da ~100 bar a pochi bar con regolatori meccanici o elettronici e fissa le portate con restrizioni a flusso termico controllato. ' +
         'Prima del propulsore un isolatore ceramico interrompe elettricamente la linea: la camera si trova a +1800 V rispetto alla sonda.',
+      explode: [0, 0.35, -0.25],
+    });
+    // Union nuts where the lines join tank, thruster and cathodes; each backs off along its line (+Y).
+    const unionAt = (c, t, flip) => [c.getPointAt(t), flip ? c.getTangentAt(t).negate() : c.getTangentAt(t)];
+    const unions = fasteners(new THREE.CylinderGeometry(0.032, 0.032, 0.07, 6), MAT.brass(), [
+      unionAt(cFeed, 0.03, false), // tank outlet
+      unionAt(cFeed, 0.835, true), // main line, before the isolator
+      unionAt(cCath, 0.93, true), // discharge cathode
+      unionAt(cNeut, 0.97, true), // neutralizer
+    ]);
+    addPart(root, unions, {
+      id: 'feedUnions',
+      name: 'Raccordi delle linee di xeno',
+      base:
+        'Piccoli dadi che uniscono i tubicini dello xeno al serbatoio, al motore e ai due catodi. Devono essere a tenuta perfetta: nello spazio anche una perdita minuscola, in anni di missione, svuoterebbe il serbatoio.',
+      expert:
+        'Raccordi a tenuta metallo su metallo, senza gomme che nel vuoto rilascerebbero gas; sui sistemi di volo molte giunzioni sono direttamente saldate. ' +
+        'La tenuta si verifica con un rivelatore di fughe a elio: sono ammesse perdite dell’ordine del milionesimo di cm³ standard al secondo. ' +
+        'Una linea aperta va tappata subito: i catodi cavi temono ossigeno e umidità.',
       explode: [0, 0.35, -0.25],
     });
 

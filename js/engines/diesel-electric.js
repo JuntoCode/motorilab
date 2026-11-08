@@ -3,6 +3,7 @@
 // wheelsets of one bogie on a scrolling track. Roof resistor grids for dynamic braking.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MAT, cut, lathe, pipe, flow, ringX, clamp, smooth } from '../core/helpers.js';
 
 const TAU = Math.PI * 2;
@@ -71,6 +72,9 @@ const mesh = (g, m, x = 0, y = 0, z = 0) => {
 
 // Rows of hex bolt heads as one InstancedMesh (axis: 'x' | 'y' | 'z').
 const HEX = new THREE.CylinderGeometry(0.02, 0.02, 0.018, 6);
+// Hex head + shank of length `len` below it (local -Y), so a bolt backing out shows its shank.
+const screw = (len, r = 0.024, h = 0.02) =>
+  mergeGeometries([new THREE.CylinderGeometry(r, r, h, 6), new THREE.CylinderGeometry(r * 0.62, r * 0.62, len, 8).translate(0, -h / 2 - len / 2, 0)]);
 function bolts(mat, pts, axis = 'y', geo = HEX) {
   const m = new THREE.InstancedMesh(geo, mat, pts.length);
   const q = new THREE.Quaternion();
@@ -747,6 +751,18 @@ export default {
     doors.add(rbox(ex1 - ex0 - 0.1, 0.12, 0.08, 0.03, blockMat, (ex0 + ex1) / 2, 2.3, -0.36));
     for (const x of CYL_X) doors.add(rod([x - 0.06, 2.36, -0.37], [x - 0.06, HEAD_Y + 0.1, -0.32], 0.01, MAT.steel(), 6));
     engine.add(cutAll(doors));
+    // flywheel housing plate: the alternator's drive-end adapter bolts onto it
+    engine.add(mesh(alongX(pipe(0.595, 0.31, 0.035, 64)), blockMat, ex1 - 0.0025, CY, 0));
+    const mountBolts = [];
+    for (const x of [ex0 + 0.12, ex1 - 0.15]) for (const dx of [-0.06, 0.06]) for (const sz of [-1, 1]) mountBolts.push([x + dx, DECK_Y + 0.1325, sz * 0.46]);
+    add(bolts(eBolt, mountBolts, 'y', screw(0.2, 0.028, 0.025)), {
+      id: 'engineMountBolts',
+      name: 'Bulloni dei supporti del motore',
+      base: 'Tengono i piedi del motore diesel fissati al telaio della locomotiva.',
+      expert:
+        'Il motore primo poggia sul telaio in pochi punti; spesso tra piede e telaio ci sono supporti elastici che filtrano le vibrazioni, e spessori che servono ad allineare il gruppo motore-alternatore.',
+      explode: [0, 0.7, 0],
+    });
     add(engine, {
       id: 'primeMover',
       name: 'Motore diesel (motore primo)',
@@ -787,6 +803,19 @@ export default {
     coupling.position.x = -0.37;
     const couplingMark = box(0.07, 0.14, 0.05, MAT.paint(0xff7a1a), -0.37, 0.2, 0);
     crank.add(coupling, couplingMark);
+    // coupling bolts (rotor to coupling disc): their own part, turning with the crank
+    const couplingSpin = new THREE.Group();
+    couplingSpin.position.set(0, CY, 0);
+    const couplingPts = Array.from({ length: 8 }, (_, i) => [-0.33, Math.cos(((i + 0.5) / 8) * TAU) * 0.23, Math.sin(((i + 0.5) / 8) * TAU) * 0.23]);
+    couplingSpin.add(bolts(MAT.steel(), couplingPts, 'x', screw(0.06, 0.022, 0.02)));
+    add(new THREE.Group().add(couplingSpin), {
+      id: 'couplingBolts',
+      name: 'Bulloni del giunto',
+      base: 'Fissano il rotore dell’alternatore al disco in fondo all’albero motore: tutta la potenza del diesel passa da qui.',
+      expert:
+        'Bulloni disposti in cerchio sul giunto: trasmettono al rotore tutta la coppia del diesel. Nei giunti a flangia la coppia passa per attrito tra le facce serrate e, con bulloni calibrati, anche a taglio.',
+      explode: [0, -0.15, 1.1],
+    });
     add(crankGroup, {
       id: 'engineCrank',
       name: 'Albero motore e giunto',
@@ -900,7 +929,18 @@ export default {
       alt.add(bell);
     }
     for (const x of [AL0 + 0.15, AL1 - 0.15]) alt.add(box(0.14, CY - 0.45 - DECK_Y, 1.0, altMat, x, (CY - 0.45 + DECK_Y) / 2, 0)); // feet
-    alt.add(bolts(cut(MAT.steel()), [...boltCircle(AL0 - 0.025, CY, 0, 0.5, 16), ...boltCircle(AL1 + 0.025, CY, 0, 0.5, 16)], 'x'));
+    alt.add(bolts(cut(MAT.steel()), boltCircle(AL1 + 0.025, CY, 0, 0.5, 16), 'x'));
+    // drive-end adapter with its flange: encloses the coupling and bolts to the engine's flywheel housing
+    alt.add(mesh(alongX(pipe(0.53, 0.5, 0.06, 64)), altMat, AL0 - 0.05, CY, 0));
+    alt.add(mesh(alongX(pipe(0.595, 0.5, 0.025, 64)), altMat, AL0 - 0.0925, CY, 0));
+    add(bolts(cut(MAT.steel()), boltCircle(AL0 - 0.066, CY, 0, 0.563, 12), 'x', screw(0.07, 0.026, 0.028)), {
+      id: 'alternatorBolts',
+      name: 'Bulloni della flangia dell’alternatore',
+      base: 'Una corona di bulloni unisce la carcassa dell’alternatore al diesel: così i due formano un blocco unico e i loro alberi restano allineati.',
+      expert:
+        'La flangia della carcassa si centra sulla campana del volano del diesel: l’accoppiamento rigido delle due carcasse garantisce l’allineamento degli alberi e un traferro costante, indispensabile quando il rotore ha un solo cuscinetto.',
+      explode: [0, 1.0, 0],
+    });
     const vents = new THREE.Group();
     for (let i = 0; i < 7; i++) {
       const a = ((i - 3) / 16) * Math.PI;
@@ -1061,6 +1101,20 @@ export default {
     cab.add(box(1.25, 0.03, 0.02, busMat, 1.75, 2.2, -0.2), box(1.25, 0.03, 0.02, busMat, 1.75, 1.3, -0.2));
     cab.add(box(0.03, 0.9, 0.02, busMat, 1.55, 1.75, -0.2), box(0.03, 0.9, 0.02, busMat, 1.92, 1.75, -0.2));
     cab.add(box(0.26, 0.2, 0.08, darkMod, 2.3, 1.42, -0.3)); // control unit
+    // mounting flanges along the base, bolted to the deck
+    const cabBolts = [];
+    for (const z of [CB.z0 - 0.04, CB.z1 + 0.04]) {
+      cab.add(box(cw, 0.03, 0.08, cabMat, ccx, CB.y0 + 0.015, z));
+      for (let k = 0; k < 4; k++) cabBolts.push([CB.x0 + 0.12 + (k * (cw - 0.24)) / 3, CB.y0 + 0.04, z + Math.sign(z) * 0.008]);
+    }
+    add(bolts(cut(MAT.steel()), cabBolts, 'y', screw(0.14)), {
+      id: 'cabinetBolts',
+      name: 'Bulloni dell’armadio di potenza',
+      base: 'I bulloni che fissano la base dell’armadio elettronico al telaio della locomotiva.',
+      expert:
+        'L’armadio è un modulo sostituibile: fissato al telaio con pochi bulloni lungo la base, si estrae intero dall’alto. I fissaggi devono reggere urti e vibrazioni di marcia senza allentarsi.',
+      explode: [0.35, 0.25, 0.8],
+    });
     add(cab, {
       id: 'powerElectronics',
       name: 'Armadio di potenza (raddrizzatore e inverter)',
@@ -1197,6 +1251,7 @@ export default {
         // Diesel: crank, pistons, rods, alternator rotor (direct coupling).
         const theta1 = state.cycle * Math.PI * 4;
         crank.rotation.x = theta1;
+        couplingSpin.rotation.x = theta1;
         altRotor.rotation.x = theta1;
         CYL_X.forEach((x, k) => {
           const local = wrap(state.cycle - FIRE[k]);

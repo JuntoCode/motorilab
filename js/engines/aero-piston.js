@@ -5,6 +5,7 @@
 // Scale ≈ 2.3 units per metre. Cycle 0..1 = 720° of crank for cylinder 1; firing order 1-3-2-4.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MAT, cut, lathe, pipe, flow, clamp, lerp } from '../core/helpers.js';
 
 const TAU = Math.PI * 2;
@@ -60,6 +61,21 @@ function instanced(geo, mat, items) {
   m.instanceMatrix.needsUpdate = true;
   return m;
 }
+// Hex head + shank of length `len` below it (local -Y): a bolt backing out of its hole shows the shank.
+const screw = (len, r = 0.02, h = 0.018) =>
+  mergeGeometries([new THREE.CylinderGeometry(r, r, h, 6), new THREE.CylinderGeometry(r * 0.6, r * 0.6, len, 8).translate(0, -h / 2 - len / 2, 0)]);
+// Cylinder hold-down studs / base nuts: 8 per cylinder around the base flange, at |z| = DECK + dz.
+const STUD_R = 0.188;
+const baseRing = (dz) =>
+  CYL.flatMap((c) =>
+    Array.from({ length: 8 }, (_, i) => {
+      const a = ((i + 0.5) / 8) * TAU;
+      return { p: v3(c.x + STUD_R * Math.cos(a), STUD_R * Math.sin(a), c.s * (DECK + dz)), n: v3(0, 0, c.s) };
+    })
+  );
+// Officina: barrel, head, valve gear and pushrods of each cylinder leave the crankcase as one assembly.
+const CYL_ASSY = ['cylinders', 'cylinderHeads', 'valves', 'pushrods'];
+const CYL_HELD_BY = ['cylinderBaseNuts', 'baffles', 'sparkPlugs', 'exhaust', 'intakeSystem'];
 
 function toothed(rPitch, teeth, amp, phase, n) {
   const pts = [];
@@ -296,6 +312,100 @@ export default {
       explain: 'In quota l’aria pesa meno: con la stessa benzina la miscela diventa troppo ricca. Smagrire riporta il giusto rapporto aria/benzina e riduce i consumi.',
     },
   ],
+  // Officina (see CONTRACT.md): how each part comes off and what holds it; the guide suggests an order.
+  // Simplified and educational, not a maintenance manual. Parts that span both banks leave as a whole.
+  disassembly: {
+    intro: 'Smontiamo il motore dall’esterno verso l’interno, fino al basamento con l’albero motore e le bielle.',
+    note: 'Sequenza semplificata a scopo didattico: sui motori aeronautici ogni lavoro spetta a tecnici abilitati e segue passo passo il manuale del costruttore.',
+    parts: {
+      spinner: { dir: [1, 0, 0], dist: 0.7 },
+      propBolts: { after: ['spinner'], motion: 'unscrew', turns: 8, out: 0.22, dir: [1, 0, 0], dist: 0.3, duration: 2 },
+      propeller: { after: ['spinner', 'propBolts'], dir: [1, 0, 0], dist: 1.0 },
+      baffles: { dir: [0, 1, 0], dist: 0.8 },
+      magnetos: { dir: [-0.8, 0.6, 0], dist: 0.9 },
+      sparkPlugs: { after: ['magnetos'], motion: 'unscrew', turns: 5, out: 0.14, dir: [0, 1, 0], dist: 0.3 },
+      exhaust: { dir: [-0.4, -1, 0], dist: 0.9 },
+      intakeSystem: { after: ['exhaust'], dir: [0, -1, 0], dist: 0.8 },
+      alternator: { after: ['propeller'], dir: [1, -0.3, 0.4], dist: 0.8 },
+      starter: { after: ['propeller', 'alternator'], dir: [1, 0, 0], dist: 0.9 },
+      cylinderBaseNuts: { motion: 'unscrew', turns: 5, out: 0.035, dir: [0, 1, 0], dist: 0.12 },
+      ...Object.fromEntries(
+        CYL_ASSY.map((id) => [id, { after: CYL_HELD_BY, with: CYL_ASSY.filter((x) => x !== id), dir: [0, 1, 0], dist: 1.0, duration: 1.2 }])
+      ),
+      pistons: { after: ['cylinders'], dir: [0, 1, 0], dist: 0.6 },
+      sumpBolts: { motion: 'unscrew', turns: 6, out: 0.09, dir: [0, -1, 0], dist: 0.3 },
+      oilSump: { after: ['sumpBolts', 'intakeSystem'], dir: [0, -1, 0], dist: 0.8 },
+      // not in the guide: they stay in the crankcase, which would have to be split to free them
+      conrods: { after: ['pistons'] },
+      camshaft: { after: ['pushrods'] },
+      crankshaft: { after: ['conrods', 'starter'] },
+    },
+    steps: [
+      {
+        id: 'prop',
+        name: 'Smonta l’elica',
+        base: 'Si toglie l’ogiva rossa, si svitano i sei bulloni del mozzo e si sfila l’elica dalla flangia dell’albero motore.',
+        expert: 'L’elica a passo fisso è imbullonata direttamente alla flangia dell’albero motore, senza riduttore. Prima di toccarla ci si assicura che i magneti siano a massa: con un magnete “caldo” basta girare l’elica a mano per avere una scintilla.',
+        parts: ['spinner', 'propBolts', 'propeller'],
+      },
+      {
+        id: 'baffles',
+        name: 'Togli i deflettori',
+        base: 'Si smontano le lamiere che guidano l’aria tra le alette: senza di loro i cilindri restano scoperti.',
+        expert: 'I deflettori sono lamiere avvitate a cilindri e basamento, con guarnizioni flessibili che fanno tenuta contro il cofano. Escono anche le parti curve sotto i cilindri, che tengono l’aria aderente alle alette inferiori.',
+        parts: ['baffles'],
+      },
+      {
+        id: 'ignition',
+        name: 'Stacca l’accensione',
+        base: 'Si scollegano i cavi dalle candele e si tolgono i due magneti con i loro fasci di cavi; poi si svitano le otto candele.',
+        expert: 'Ogni cavo schermato è avvitato alla sua candela con un dado. Le candele si svitano a motore freddo e si tengono in ordine: il loro aspetto (depositi di piombo, olio, fuliggine) racconta come lavora ogni cilindro.',
+        parts: ['magnetos', 'sparkPlugs'],
+      },
+      {
+        id: 'exhaust',
+        name: 'Stacca lo scarico',
+        base: 'Si staccano i quattro tubi da sotto le testate e si abbassa la marmitta con il suo manicotto dell’aria calda.',
+        expert: 'I collettori sono fissati sotto le testate con flange e dadi, che il calore rende spesso duri da svitare. Con la marmitta si stacca anche il tubo dell’aria calda per il carburatore.',
+        parts: ['exhaust'],
+      },
+      {
+        id: 'intake',
+        name: 'Togli carburatore e aspirazione',
+        base: 'Si scollegano il tubo della benzina e i comandi di gas e miscela, poi si abbassano carburatore, filtro dell’aria e condotti di aspirazione.',
+        expert: 'Il carburatore è imbullonato sotto la coppa; i condotti verso le testate sono collegati con manicotti e fascette. Nel motore vero i passaggi dentro la coppa fanno parte della fusione: qui il modello li semplifica.',
+        parts: ['intakeSystem'],
+      },
+      {
+        id: 'accessories',
+        name: 'Togli alternatore e avviamento',
+        base: 'Senza l’elica si può sfilare la cinghia: escono l’alternatore e poi la corona dentata con il motorino d’avviamento.',
+        expert: 'La cinghia dell’alternatore gira attorno alla puleggia dietro l’elica: per cambiarla bisogna smontare l’elica. La corona dentata dell’avviamento sta sulla flangia dell’albero motore, insieme alla puleggia.',
+        parts: ['alternator', 'starter'],
+      },
+      {
+        id: 'cylinders',
+        name: 'Sfila i cilindri',
+        base: 'Si svitano i dadi alla base di ogni cilindro e lo si sfila dai suoi prigionieri: canna e testata escono insieme, con valvole, bilancieri e aste.',
+        expert: 'In questi motori la canna in acciaio e la testata in alluminio sono avvitate e calettate a caldo: formano un pezzo solo, senza guarnizione di testa. Nel motore vero ogni cilindro si sfila verso l’esterno lungo il suo asse, dopo aver tolto bilancieri, aste e tubi di protezione; qui escono tutti insieme per semplicità.',
+        parts: ['cylinderBaseNuts', 'cylinders'],
+      },
+      {
+        id: 'pistons',
+        name: 'Sfila i pistoni',
+        base: 'Si spinge fuori lo spinotto e ogni pistone si stacca dalla sua biella. Le bielle restano attaccate all’albero motore.',
+        expert: 'Lo spinotto è flottante, trattenuto da tappi alle estremità: sfilato quello, il pistone è libero. Le bielle che sporgono dal basamento vanno sostenute, perché non battano contro i bordi delle sedi dei cilindri.',
+        parts: ['pistons'],
+      },
+      {
+        id: 'sump',
+        name: 'Togli la coppa dell’olio',
+        base: 'Scaricato l’olio, si svitano i bulloni lungo il bordo e si abbassa la coppa.',
+        expert: 'La coppa è imbullonata sotto il basamento con una guarnizione. Resta il basamento con albero motore, bielle e albero a camme: per arrivare a quelli bisogna separare le due metà del basamento.',
+        parts: ['sumpBolts', 'oilSump'],
+      },
+    ],
+  },
   camera: { position: [-2.87, 1.98, 5.71], target: [0.15, 0.08, 0] },
   thumb: { orbit: [-24, 18], zoom: 1.5, view: 'section' },
 
@@ -388,6 +498,8 @@ export default {
       caseBolts.push({ p: v3(x, cy1 + 0.05, 0), n: v3(0, 1, 0) });
     }
     crankcase.add(instanced(boltGeo, cut(MAT.steel(), { cap: false }), caseBolts));
+    // cylinder hold-down studs: they stay in the case when the base nuts and the cylinders come off
+    crankcase.add(instanced(new THREE.CylinderGeometry(0.009, 0.009, 0.08, 8), cut(MAT.steel(), { cap: false }), baseRing(0.025)));
     root.add(
       ctx.part(crankcase, {
         id: 'crankcase',
@@ -419,6 +531,14 @@ export default {
     const drain = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.03, 6), MAT.steel());
     drain.position.set(-0.5, -0.615, 0.12);
     sumpGroup.add(drain);
+    // mounting flange around the top edge, bolted to the crankcase from below
+    const sumpRim = new THREE.Mesh(rbox(0.97, 0.03, 0.58, 0.008), sumpMat);
+    sumpRim.position.set(-0.15, cy0 - 0.022, 0);
+    sumpGroup.add(sumpRim);
+    const sumpBolts = [];
+    for (const x of [-0.57, -0.36, -0.12, 0.12, 0.3]) {
+      for (const z of [-0.265, 0.265]) sumpBolts.push({ p: v3(x, cy0 - 0.046, z), n: v3(0, -1, 0) });
+    }
     root.add(
       ctx.part(sumpGroup, {
         id: 'oilSump',
@@ -426,6 +546,13 @@ export default {
         base: 'La vaschetta sotto il motore con circa 7–8 litri di olio. Dentro passano anche i tubi della miscela verso i cilindri.',
         expert:
           'Coppa a carter umido da circa 8 quarti (≈ 7,5 L) per l’O-360. L’olio lubrifica e raffredda pistoni e cuscinetti e smaltisce una parte importante del calore, spesso con un radiatore dell’olio dedicato. I condotti di aspirazione la attraversano e ne prendono calore.',
+        explode: [0, -1.3, 0],
+      }),
+      ctx.part(instanced(screw(0.07, 0.018), cut(MAT.steel(), { cap: false }), sumpBolts), {
+        id: 'sumpBolts',
+        name: 'Bulloni della coppa',
+        base: 'Una fila di bulloni lungo il bordo tiene la coppa dell’olio stretta sotto il basamento.',
+        expert: 'Bulloni lungo la flangia della coppa, che stringono la guarnizione contro il basamento: serrati in modo uniforme evitano trafilamenti d’olio.',
         explode: [0, -1.3, 0],
       })
     );
@@ -437,10 +564,11 @@ export default {
     const barrelLen = HEAD_Z - DECK + 0.03;
     const barrelGeo = pipe(0.168, BORE + 0.002, barrelLen, 40).rotateX(Math.PI / 2);
     const finGeo = pipe(0.232, 0.168, 0.009, 36).rotateX(Math.PI / 2);
+    // the fins start clear of the base flange and grow in two steps, leaving room for a wrench on the base nuts
+    const shortFins = [pipe(0.2, 0.168, 0.009, 36).rotateX(Math.PI / 2), pipe(0.216, 0.168, 0.009, 36).rotateX(Math.PI / 2)];
     const flangeGeo = pipe(0.205, 0.168, 0.025, 36).rotateX(Math.PI / 2);
     const shroudGeo = pipe(0.022, 0.015, 0.54, 12).rotateX(Math.PI / 2);
     const shroudMat = cut(MAT.paint(0x9aa1a8, 0.45));
-    const baseNuts = [];
     for (const c of CYL) {
       const b = new THREE.Mesh(barrelGeo, barrelMat);
       b.position.set(c.x, 0, c.s * (DECK - 0.03 + barrelLen / 2));
@@ -448,8 +576,8 @@ export default {
       const fl = new THREE.Mesh(flangeGeo, barrelMat);
       fl.position.set(c.x, 0, c.s * (DECK + 0.0125));
       cylinders.add(fl);
-      for (let z = 0.34; z < HEAD_Z - 0.01; z += 0.024) {
-        const f = new THREE.Mesh(finGeo, barrelMat);
+      for (let z = 0.388, i = 0; z < HEAD_Z - 0.01; z += 0.024, i++) {
+        const f = new THREE.Mesh(shortFins[i] || finGeo, barrelMat);
         f.position.set(c.x, 0, c.s * z);
         cylinders.add(f);
       }
@@ -458,12 +586,17 @@ export default {
         sh.position.set(c.x + dx, CAM_Y, c.s * (DECK + 0.25));
         cylinders.add(sh);
       }
-      for (let i = 0; i < 8; i++) {
-        const a = ((i + 0.5) / 8) * TAU;
-        baseNuts.push({ p: v3(c.x + 0.188 * Math.cos(a), 0.188 * Math.sin(a), c.s * (DECK + 0.033)), n: v3(0, 0, c.s) });
-      }
     }
-    cylinders.add(instanced(nutGeo, cut(MAT.steel(), { cap: false }), baseNuts));
+    root.add(
+      ctx.part(instanced(new THREE.CylinderGeometry(0.02, 0.02, 0.022, 6), cut(MAT.steel(), { cap: false }), baseRing(0.036)), {
+        id: 'cylinderBaseNuts',
+        name: 'Dadi di base dei cilindri',
+        base: 'Otto dadi per cilindro stringono la sua flangia contro il basamento: sono loro a tenere fermo il cilindro mentre lo scoppio cerca di spingerlo via.',
+        expert:
+          'Ogni cilindro è tenuto da prigionieri piantati nel basamento e da dadi sulla flangia di base (su questi motori di solito quattro più grandi e quattro più piccoli). Sopportano la spinta dei gas a ogni combustione: per questo si serrano in sequenza e si controllano a ogni ispezione.',
+        explode: [0, 0.75, 0],
+      })
+    );
     root.add(
       ctx.part(cylinders, {
         id: 'cylinders',
@@ -658,6 +791,7 @@ export default {
     const pushMat = MAT.steel();
     const tappets = [];
     const pushrods = [];
+    const pushrodGroup = new THREE.Group(); // own part: the rods leave with the cylinders, the tappets stay in the case
     for (const v of valvesList) {
       const t = new THREE.Mesh(tappetGeo, tappetMat);
       t.position.set(v.x, CAM_Y, 0);
@@ -666,13 +800,21 @@ export default {
       const p = new THREE.Mesh(pushGeo, pushMat);
       p.position.set(v.x, CAM_Y, 0);
       if (v.c.s < 0) p.rotation.y = Math.PI;
-      camGroup.add(p);
+      pushrodGroup.add(p);
       pushrods.push(p);
     }
     root.add(
+      ctx.part(pushrodGroup, {
+        id: 'pushrods',
+        name: 'Aste delle punterie',
+        base: 'Otto aste sottili che corrono dentro i tubi sopra i cilindri: portano la spinta delle camme dal basamento fino ai bilancieri nelle testate.',
+        expert:
+          'Aste tubolari tra punteria idraulica e bilanciere, dentro guaine a tenuta. Sono cave: l’olio in pressione sale dalle punterie ai bilancieri proprio attraverso le aste. Esistono in più lunghezze, per regolare il gioco “a secco” della punteria idraulica.',
+        explode: [0, 0.75, 0],
+      }),
       ctx.part(camGroup, {
         id: 'camshaft',
-        name: 'Albero a camme, punterie e aste',
+        name: 'Albero a camme e punterie',
         base: 'Un albero con otto “gobbe” sopra l’albero motore, che gira a metà velocità grazie a due ingranaggi. Le gobbe spingono le punterie e lunghe aste che corrono sopra i cilindri fino alla testa.',
         expert:
           'Albero a camme unico nel basamento, sopra l’albero motore, comandato da ingranaggi 2:1 sul retro; una camma per valvola, condivisa da una sola punteria. Punterie idrauliche (recupero automatico del gioco) e aste in tubo d’acciaio dentro guaine a tenuta d’olio. Con l’albero in alto, dopo lunghe soste l’olio scola via dalle camme: la corrosione delle camme è un problema noto di questi motori se volano poco.',
@@ -931,18 +1073,22 @@ export default {
     }
     const hub = new THREE.Mesh(cylX(0.13, 0.15, 32), MAT.aluminum());
     prop.add(hub);
+    // spinner and hub bolts are their own parts: the bolt heads sit on the front face of the hub, under the spinner
     const spinner = new THREE.Mesh(
       lathe([[0, 0], [0.19, 0], [0.185, 0.1], [0.15, 0.24], [0.08, 0.36], [0, 0.42]], 40).rotateZ(-Math.PI / 2),
       MAT.paint(0xd23a2a, 0.3)
     );
-    spinner.position.x = 0.07;
-    prop.add(spinner);
+    spinner.position.x = PROP_X + 0.07;
     const propBolts = [];
     for (let i = 0; i < 6; i++) {
       const a = ((i + 0.5) / 6) * TAU;
-      propBolts.push({ p: v3(-0.08, 0.1 * Math.cos(a), 0.1 * Math.sin(a)), n: v3(-1, 0, 0) });
+      propBolts.push({ p: v3(0.084, 0.095 * Math.cos(a), 0.095 * Math.sin(a)), n: v3(1, 0, 0) });
     }
-    prop.add(instanced(boltGeo, MAT.steel(), propBolts));
+    const propBoltSpin = new THREE.Group(); // turns with the propeller
+    propBoltSpin.add(instanced(screw(0.2, 0.022), MAT.steel(), propBolts));
+    const propBoltWrap = new THREE.Group();
+    propBoltWrap.position.x = PROP_X;
+    propBoltWrap.add(propBoltSpin);
     const blurMat = new THREE.MeshBasicMaterial({ color: 0x9aa4b0, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
     const blur = new THREE.Mesh(new THREE.RingGeometry(0.22, PROP_R, 72, 1).rotateY(Math.PI / 2), blurMat);
     blur.renderOrder = 3;
@@ -957,6 +1103,22 @@ export default {
         expert:
           'Elica in lega di alluminio, diametro ~1,88 m (74 pollici) e passo ~1,5 m, in presa diretta: a 2 700 giri/min le punte girano a ~265 m/s (Mach ~0,78). Lo svergolamento mantiene un angolo d’attacco simile lungo la pala. Punte gialle per renderla visibile a terra. Sui motori più potenti l’elica a passo variabile (giri costanti) ottimizza decollo e crociera.',
         explode: [1.5, 0, 0],
+      }),
+      ctx.part(propBoltWrap, {
+        id: 'propBolts',
+        name: 'Bulloni dell’elica',
+        base: 'Sei bulloni lunghi attraversano il mozzo dell’elica e la stringono contro la flangia dell’albero motore.',
+        expert:
+          'Bulloni ad alta resistenza che attraversano il mozzo e si avvitano nelle boccole della flangia dell’albero. La coppia passa per attrito tra le facce e attraverso le boccole di trascinamento; i bulloni si serrano a croce e si assicurano con filo di frenatura.',
+        explode: [1.5, 0, 0],
+      }),
+      ctx.part(spinner, {
+        id: 'spinner',
+        name: 'Ogiva dell’elica',
+        base: 'Il “naso” rosso davanti all’elica: copre il mozzo con i suoi bulloni e accompagna l’aria verso le prese di raffreddamento.',
+        expert:
+          'Ogiva in lamiera di alluminio o in composito, avvitata a un disco di supporto sul mozzo. Riduce la resistenza del mozzo e regolarizza il flusso verso le prese d’aria del cofano; gira con l’elica, quindi deve essere centrata ed equilibrata.',
+        explode: [2.1, 0, 0],
       })
     );
     blur.position.x = PROP_X - 0.01;
@@ -1154,6 +1316,7 @@ export default {
         const theta = state.cycle * 2 * TAU; // crank angle, 2 turns per cycle
         crank.rotation.x = theta;
         prop.rotation.x = theta;
+        propBoltSpin.rotation.x = theta;
         ringSpin.rotation.x = theta;
         altPulley.rotation.x = theta * (0.28 / 0.05);
         cam.rotation.x = -state.cycle * TAU; // gear-driven: opposite sense, half speed

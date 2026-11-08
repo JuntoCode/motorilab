@@ -354,9 +354,13 @@ function flangeX(x, rIn, rOut, w, seg = 72) {
   return latheX([[rIn, x - w / 2], [rOut, x - w / 2], [rOut, x + w / 2], [rIn, x + w / 2], [rIn, x - w / 2]], seg);
 }
 
-// Bolt heads as one InstancedMesh: add(pos, normal) then mesh().
-function boltSet(mat, r = 0.011, h = 0.012) {
-  const geo = new THREE.CylinderGeometry(r, r, h, 6);
+// Hex head with its shank of length `len` below it (local -Y), so a bolt backing out shows its shank.
+function screwGeo(r, h, len) {
+  return mergeGeos([new THREE.CylinderGeometry(r, r, h, 6), new THREE.CylinderGeometry(r * 0.6, r * 0.6, len, 8).translate(0, -h / 2 - len / 2, 0)]);
+}
+
+// Bolt heads as one InstancedMesh: add(pos, normal) then mesh(). Pass screwGeo() as `geo` for removable bolts.
+function boltSet(mat, r = 0.011, h = 0.012, geo = new THREE.CylinderGeometry(r, r, h, 6)) {
   const list = [];
   const q = new THREE.Quaternion();
   const one = new THREE.Vector3(1, 1, 1);
@@ -630,6 +634,118 @@ export default {
     },
   ],
 
+  // Officina (see CONTRACT.md): modular teardown from the outside in, along the engine axis.
+  // The centrifugal compressor with its case stays as the base. Simplified and educational.
+  disassembly: {
+    intro: "Smontiamo il turboelica dall'esterno verso l'interno, un modulo alla volta, fino al compressore centrifugo.",
+    note:
+      "Sequenza semplificata a scopo didattico: su un motore vero si segue il manuale di manutenzione del costruttore, con attrezzature dedicate, " +
+      "e ci lavorano solo tecnici abilitati.",
+    parts: {
+      nacelle: { dir: [0, 1, 0], dist: 1.8, duration: 1.2 },
+      spinner: { dir: [-1, 0, 0], dist: 1.0 },
+      pitchControl: { after: ['nacelle', 'spinner'], dir: [-1, 0.25, 0], dist: 1.0 },
+      propBolts: { after: ['spinner', 'pitchControl'], motion: 'unscrew', turns: 6, out: 0.09, dir: [-1, 0, 0], dist: 0.4 },
+      propeller: { after: ['propBolts', 'pitchControl'], dir: [-1, 0, 0], dist: 1.4, duration: 1.2 },
+      accessories: { after: ['nacelle'], dir: [0, -0.25, -1], dist: 1.0 },
+      gearboxBolts: { after: ['nacelle', 'accessories'], motion: 'unscrew', turns: 5, out: 0.05, dir: [-1, 0, 0], dist: 0.25 },
+      gearbox: { after: ['gearboxBolts', 'propeller', 'pitchControl'], dir: [-1, 0, 0], dist: 1.4, duration: 1.2 },
+      intake: { after: ['gearbox', 'accessories'], dir: [-1, 0, 0], dist: 1.4, duration: 1.1 },
+      lpc: { after: ['intake'], dir: [-1, 0, 0], dist: 1.2 },
+      exhaust: { after: ['nacelle'], dir: [1, 0.15, 0], dist: 1.3 },
+      powerTurbine: { after: ['exhaust'], dir: [1, 0, 0], dist: 1.2 },
+      caseBolts: { after: ['nacelle'], motion: 'unscrew', turns: 5, out: 0.06, dir: [-1, 0, 0], dist: 0.3, duration: 2 },
+      combustor: { after: ['caseBolts', 'powerTurbine', 'accessories'], dir: [1, 0, 0], dist: 1.5, duration: 1.2 },
+      ggTurbine: { after: ['combustor'], dir: [1, 0, 0], dist: 1.2 },
+      shafts: { after: ['lpc', 'ggTurbine', 'powerTurbine'], dir: [1, 0, 0], dist: 1.8, duration: 1.2 },
+    },
+    steps: [
+      {
+        id: 'cowls',
+        name: 'Apri le cofanature',
+        base: "Si sganciano i ganci a leva e si tolgono le cofanature della gondola: sotto compare tutto il motore, dal riduttore allo scarico.",
+        expert:
+          "Sull'aereo le cofanature sono sportelli incernierati che si aprono per le ispezioni; qui le togliamo del tutto, insieme al traliccio degli attacchi, " +
+          "come se il motore fosse su un cavalletto d'officina.",
+        parts: ['nacelle'],
+      },
+      {
+        id: 'spinner',
+        name: "Scopri il mozzo dell'elica",
+        base: "Si sfila in avanti l'ogiva, poi si stacca il meccanismo che cambia il passo delle pale, insieme al suo regolatore.",
+        expert:
+          "L'ogiva è solo una carenatura: il suo piatto posteriore resta sul mozzo. L'attuatore del passo è idraulico e riceve l'olio dal regolatore " +
+          "attraverso un tubo che passa dentro l'albero dell'elica.",
+        parts: ['spinner', 'pitchControl'],
+      },
+      {
+        id: 'prop',
+        name: "Smonta l'elica",
+        base: "Con la chiave si svitano i bulloni del mozzo, poi l'elica si sfila in avanti dall'albero del riduttore.",
+        expert:
+          "Il mozzo è imbullonato alla flangia dell'albero dell'elica, che riceve tutta la coppia e la spinta. Un'elica di quasi 4 metri pesa ben più di cento chili: " +
+          "nella realtà la si sostiene con un'imbracatura mentre si tolgono i bulloni.",
+        parts: ['propBolts', 'propeller'],
+      },
+      {
+        id: 'accessories',
+        name: 'Stacca accessori e impianti',
+        base: "Si scollegano tubi e cavi e si toglie la scatola accessori con le pompe, l'avviatore e il serbatoio dell'olio.",
+        expert:
+          "Tubazioni del carburante e dell'olio e cablaggi elettrici scavalcano i moduli del motore: vanno staccati prima di separarli. " +
+          "Le aperture si chiudono con tappi, perché nei circuiti non deve entrare sporco.",
+        parts: ['accessories'],
+      },
+      {
+        id: 'gearbox',
+        name: 'Togli il riduttore',
+        base: "Si svita la corona di bulloni della flangia e il riduttore si sfila in avanti: il suo pignone esce dall'albero della turbina libera.",
+        expert:
+          "Il riduttore è un modulo a sé: si separa dal resto del motore alla flangia posteriore, dove l'albero di potenza si innesta nel pignone d'ingresso " +
+          "con un accoppiamento scanalato. Così può essere revisionato senza aprire il generatore di gas.",
+        parts: ['gearboxBolts', 'gearbox'],
+      },
+      {
+        id: 'front',
+        name: "Sfila presa d'aria e compressore LP",
+        base: "Tolto il riduttore, la presa d'aria con la sua cassa ad anello esce in avanti lungo l'albero; dopo di lei si sfila il compressore di bassa pressione.",
+        expert:
+          "La cassa d'ingresso è attraversata al centro dall'albero di potenza: per questo può uscire solo lungo l'asse. Poi tocca al compressore LP, " +
+          "con il rotore, gli statori e la sua cassa.",
+        parts: ['intake', 'lpc'],
+      },
+      {
+        id: 'rear',
+        name: 'Togli scarico e turbina libera',
+        base: "Dalla parte opposta si stacca il condotto di scarico: dietro appare la turbina libera, che si sfila all'indietro dal suo albero.",
+        expert:
+          "La turbina di potenza non ha legami meccanici con il generatore di gas: è collegata soltanto all'albero più interno. " +
+          "Per questo forma un modulo separato, che esce da dietro senza smontare compressori e turbine HP e LP.",
+        parts: ['exhaust', 'powerTurbine'],
+      },
+      {
+        id: 'combustor',
+        name: 'Sfila la camera di combustione',
+        base: "Si svitano i bulloni della flangia più grande e la cassa con la camera di combustione scorre all'indietro, scoprendo le turbine che avvolgeva.",
+        expert:
+          "La cassa esterna è un recipiente in pressione: contiene l'aria che esce dal compressore, alla pressione più alta di tutto il motore. " +
+          "Dentro porta il tubo di fiamma anulare con gli iniettori; essendo a flusso invertito, avvolge le turbine del generatore di gas.",
+        parts: ['caseBolts', 'combustor'],
+      },
+      {
+        id: 'core',
+        name: 'Sfila turbine e alberi',
+        base:
+          "Restano le due turbine del generatore di gas e i tre alberi infilati uno nell'altro: escono all'indietro. " +
+          "Sul banco rimane il compressore centrifugo con la sua cassa, il cuore del motore.",
+        expert:
+          "Ogni turbina è calettata sull'albero del suo compressore: HP all'esterno, LP in mezzo, potenza al centro. " +
+          "I rotori sono equilibrati con grande precisione, perciò al rimontaggio ogni elemento deve tornare nella posizione di prima.",
+        parts: ['ggTurbine', 'shafts'],
+      },
+    ],
+  },
+
   camera: { position: [-4.7, 2.2, 6.1], target: [0, -0.1, 0] },
 
   build(ctx) {
@@ -702,8 +818,21 @@ export default {
     const spinPts = [
       [0, -0.42], [0.06, -0.4], [0.13, -0.33], [0.19, -0.23], [0.232, -0.1], [0.25, 0.04], [0.252, 0.2],
     ];
-    propSpin.add(new THREE.Mesh(wall(spinPts, -0.01, 64), mSpinner));
-    propSpin.add(new THREE.Mesh(latheX([[0.07, 0.2], [0.252, 0.2]], 64), mSpinner));
+    // spinner dome: its own part (it comes off first); the backplate stays on the hub
+    const spinnerPart = new THREE.Group();
+    const spinnerSpin = new THREE.Group();
+    spinnerSpin.position.set(XB, YP, 0);
+    spinnerPart.add(spinnerSpin);
+    spinnerSpin.add(new THREE.Mesh(wall(spinPts, -0.01, 64), mSpinner));
+    {
+      const heads = boltSet(mBolt, 0.008, 0.004);
+      for (let i = 0; i < 12; i++) {
+        const a = ((i + 0.5) / 12) * TAU;
+        heads.add(new THREE.Vector3(0.17, 0.2515 * Math.cos(a), 0.2515 * Math.sin(a)), new THREE.Vector3(0, Math.cos(a), Math.sin(a)));
+      }
+      spinnerSpin.add(heads.mesh());
+    }
+    propSpin.add(new THREE.Mesh(flangeX(0.195, 0.07, 0.241, 0.01, 64), mSpinner));
     propSpin.add(new THREE.Mesh(latheX([[0.05, -0.07], [0.1, -0.07], [0.11, -0.04], [0.11, 0.1], [0.07, 0.13], [0.05, 0.13]], 40), mHub));
 
     const BLADE_L = 1.38;
@@ -756,6 +885,36 @@ export default {
           "Elica Hamilton Sundstrand 568F dell'ATR 72: 6 pale in composito, Ø 3,93 m, velocità costante 1.200 giri/min al decollo (Np 100%), ~82% in crociera. " +
           "Il passo misurato al 75% del raggio va da pochi gradi (minimo in volo) a ~40° e oltre ad alta velocità, fino alla bandiera (~85°) e al passo negativo (\"beta\" e reverse a terra). " +
           "Le pale sono svergolate (più angolo alla radice che alla punta) perché la punta si muove più veloce. Fornisce ~90% della spinta.",
+        explode: [-1.5, 0, 0],
+      }),
+      ctx.part(spinnerPart, {
+        id: 'spinner',
+        name: 'Ogiva',
+        base:
+          "La punta affusolata davanti all'elica. Copre il mozzo e il meccanismo del passo e accompagna l'aria in modo regolare verso le radici delle pale " +
+          "e la presa d'aria che sta subito dietro.",
+        expert:
+          "Carenatura sottile fissata con una corona di viti a un piatto posteriore (bulkhead) solidale al mozzo: gira con l'elica. Non porta carichi, " +
+          "ma deve essere centrata ed equilibrata con cura, perché ruota a ~1.200 giri/min. Riduce la resistenza della zona del mozzo, dove le pale hanno sezione tozza e spingono poco.",
+        explode: [-1.85, 0, 0],
+      }),
+    );
+
+    // hub bolts: hub front face to the propeller-shaft flange (rotate with the hub)
+    const propBoltPart = new THREE.Group();
+    const propBoltSpin = new THREE.Group();
+    propBoltSpin.position.set(XB, YP, 0);
+    propBoltPart.add(propBoltSpin);
+    propBoltSpin.add(boltSet(mBolt, 0.012, 0.014, screwGeo(0.012, 0.014, 0.08)).ringX(-0.07, 0.078, 12, -1, 0, 0, TAU / 24).mesh());
+    model.add(
+      ctx.part(propBoltPart, {
+        id: 'propBolts',
+        name: "Bulloni del mozzo dell'elica",
+        base:
+          "Una corona di bulloni che stringe il mozzo dell'elica alla flangia dell'albero che esce dal riduttore. Tutta la forza dell'elica passa da qui.",
+        expert:
+          "Il giunto flangiato trasmette all'albero la coppia (oltre 15 kNm al decollo), la spinta e i momenti flettenti dell'elica. I bulloni lavorano a trazione: " +
+          "è il loro precarico a tenere unite le due flange, mentre nei giunti di questo tipo la coppia passa per attrito e attraverso spine di trascinamento.",
         explode: [-1.5, 0, 0],
       }),
     );
@@ -868,7 +1027,9 @@ export default {
       boss.position.y = YP;
       const tube = new THREE.Mesh(wall([[0.15, -1.54], [0.09, -1.46], [0.085, -1.2], [0.1, -1.12]], 0.01, 40), mRgb);
       tube.position.y = YE;
-      rgb.add(eye, eyeBase, boss, tube);
+      const tubeFlange = new THREE.Mesh(flangeX(-1.143, 0.095, 0.165, 0.016, 48), mRgb); // bolted to the inlet case
+      tubeFlange.position.y = YE;
+      rgb.add(eye, eyeBase, boss, tube, tubeFlange);
     }
     // gears (axis X); phase convention: Θ = -rotation.x
     const angTo = (y0, z0, y1, z1) => Math.atan2(y1 - y0, z1 - z0);
@@ -916,6 +1077,16 @@ export default {
           "Riduttore a due stadi con due alberi intermedi (twin layshaft): il carico si divide su due percorsi, riducendo dimensioni e peso degli ingranaggi. " +
           "Stadi da ≈ 3,4:1 e ≈ 4,4:1 nel modello (13/44 e 15/66 denti), totale ≈ 15:1; nei PW100 reali ≈ 15–17:1 per passare da ~20.000 giri/min a ~1.200. " +
           "Trasmette oltre 15 kNm di coppia all'albero dell'elica, su cui agiscono anche la spinta e i momenti giroscopici. Ospita il torsiometro e la pompa del regolatore.",
+        explode: [-0.3, 0.95, 0],
+      }),
+      ctx.part(boltSet(mBolt, 0.013, 0.013, screwGeo(0.013, 0.013, 0.03)).ringX(-1.151, 0.135, 12, -1, YE).mesh(), {
+        id: 'gearboxBolts',
+        name: 'Bulloni della flangia del riduttore',
+        base:
+          "I bulloni che uniscono il riduttore al resto del motore, tutt'intorno al tubo in cui passa l'albero della turbina libera.",
+        expert:
+          "Flangia di accoppiamento tra il modulo riduttore e la cassa d'ingresso. Il giunto deve tenere perfettamente allineati l'albero di potenza e il pignone d'ingresso " +
+          "e regge parte dei carichi dell'elica: spinta, coppia di reazione e momenti giroscopici.",
         explode: [-0.3, 0.95, 0],
       }),
     );
@@ -1023,7 +1194,6 @@ export default {
     comb.add(new THREE.Mesh(wall([[0.568, -0.2], [0.568, 0.56], [0.552, 0.64], [0.5, 0.7], [0.42, 0.75], [0.35, 0.78]], 0.012, 72), mCase));
     comb.add(new THREE.Mesh(flangeX(-0.2, 0.575, 0.625, 0.03), mCase));
     comb.add(new THREE.Mesh(flangeX(0.3, 0.578, 0.6, 0.02), mCase));
-    comb.add(boltSet(mBolt, 0.011, 0.012).ringX(-0.216, 0.602, 36, -1).mesh());
     // igniter plugs (2) on the case
     for (const a of [200 * DEG, 340 * DEG]) {
       const plug = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.026, 0.09, 12), mLatch);
@@ -1071,6 +1241,17 @@ export default {
           "Combustore anulare a flusso invertito con ~14 iniettori ad aria assistita sulla cupola posteriore e accenditori. Il ripiegamento del percorso permette di " +
           "sovrapporre combustore e turbine: alberi corti e rigidi, motore compatto. Rapporto aria/combustibile globale ≈ 50:1, zona primaria vicina allo stechiometrico; " +
           "l'aria di diluizione porta i gas a ≈ 1.100–1.300 °C all'ingresso turbina. Liner raffreddato a film.",
+        explode: [0.15, 1.15, 0],
+      }),
+      // front case flange bolts (combustor case to compressor case), heads facing forward
+      ctx.part(boltSet(mBolt, 0.012, 0.012, screwGeo(0.012, 0.012, 0.04)).ringX(-0.215, 0.602, 36, -1).mesh(), {
+        id: 'caseBolts',
+        name: 'Bulloni della cassa del combustore',
+        base:
+          "Decine di bulloni, uno accanto all'altro, sulla flangia più grande del motore: tengono unita la cassa della camera di combustione a quella del compressore.",
+        expert:
+          "Le casse di una turbina a gas sono unite da flange con molti bulloni ravvicinati: la giunzione deve restare a tenuta con l'aria alla pressione di mandata " +
+          "del compressore (≈ 15 bar al decollo) e a qualche centinaio di gradi, seguendo le dilatazioni termiche senza deformarsi.",
         explode: [0.15, 1.15, 0],
       }),
     );
@@ -1519,6 +1700,8 @@ export default {
         const propAng = ptAng / RATIO;
         outGroup.rotation.x = -(th.out + propAng);
         propSpin.rotation.x = -propAng;
+        spinnerSpin.rotation.x = -propAng;
+        propBoltSpin.rotation.x = -propAng;
         pitchSpin.rotation.x = -propAng;
 
         // blade pitch about each blade axis + yoke and links

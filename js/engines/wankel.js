@@ -5,6 +5,7 @@
 // turned by FRAME so the major axis is vertical and the ports face +x in the world.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MAT, cut, pipe, flow, clamp, lerp } from '../core/helpers.js';
 
 const TAU = Math.PI * 2;
@@ -166,6 +167,9 @@ function instanced(geo, mat, items) {
   m.instanceMatrix.needsUpdate = true;
   return m;
 }
+// Hex head + shank of length `len` below it (local -Y), so a bolt backing out of its hole shows the shank.
+const screw = (len, r, h) =>
+  mergeGeometries([new THREE.CylinderGeometry(r, r, h, 6), new THREE.CylinderGeometry(r * 0.6, r * 0.6, len, 10).translate(0, -h / 2 - len / 2, 0)]);
 // Replace every material under obj with a cut (no cap) clone, so it disappears in the section view.
 function cutAll(obj) {
   obj.traverse((o) => {
@@ -326,6 +330,108 @@ export default {
       explain: 'Nella MX-30 R-EV un monorotore da 830 cm³ fa solo da generatore per la batteria: conta più l’ingombro ridotto che il rendimento di picco.',
     },
   ],
+  // Officina (see CONTRACT.md): the engine is opened from the front, one slice of the sandwich at a time;
+  // the rear side housing stays on the bench as the base. Simplified and educational, not a workshop manual.
+  disassembly: {
+    intro: 'Apriamo il Wankel da fuori verso dentro: prima gli accessori, poi il “panino” di piastre e statori, una fetta alla volta.',
+    note: 'Sequenza semplificata a scopo didattico: in officina si segue il manuale del costruttore, con i suoi attrezzi e le sue coppie di serraggio. Nel 13B vero i tiranti si svitano dal lato del volano e il pacco si apre partendo da dietro; qui lo apriamo da davanti per vederlo meglio.',
+    parts: {
+      ignitionLeads: { dir: [-1, 0.25, 0], dist: 0.9 },
+      sparkPlugs: { after: ['ignitionLeads'], motion: 'unscrew', turns: 6, out: 0.35, dir: [-1, 0, 0], dist: 0.5 },
+      intakeManifold: { dir: [1, 0.6, 0], dist: 1.0 },
+      exhaustManifold: { dir: [1, -0.4, 0], dist: 1.0 },
+      accessoryDrive: { dir: [0, 0.15, 1], dist: 1.0 },
+      frontCoverBolts: { after: ['accessoryDrive'], motion: 'unscrew', turns: 6, out: 0.12, dir: [0, 0, 1] },
+      frontCover: { after: ['frontCoverBolts', 'accessoryDrive'], dir: [0, 0, 1], dist: 1.0 },
+      frontCounterweight: { after: ['frontCover'], dir: [0, 0, 1], dist: 0.8 },
+      oilPan: { dir: [0, -1, 0], dist: 0.9 },
+      flywheelNut: { motion: 'unscrew', turns: 6, out: 0.15, dir: [0, 0, -1], dist: 0.4 },
+      flywheel: { after: ['flywheelNut'], dir: [0, 0, -1], dist: 1.0 },
+      tensionBolts: { after: ['accessoryDrive', 'frontCover', 'oilPan'], motion: 'unscrew', turns: 10, out: 0.6, dir: [0, 0, 1], dist: 1.2, duration: 2.4 },
+      frontHousing: { after: ['tensionBolts', 'frontCounterweight'], with: ['phasingGears'], dir: [0, 0, 1], dist: 1.2 },
+      phasingGears: { after: ['frontHousing'], dir: [0, 0, 1], dist: 0.9 },
+      rotor: { after: ['frontHousing'], with: ['apexSeals'], dir: [0, 0, 1], dist: 1.2 },
+      apexSeals: { after: ['frontHousing'], dir: [0, 0, 1], dist: 0.9 },
+      rotorHousing: { after: ['frontHousing', 'sparkPlugs', 'exhaustManifold'], dir: [0, 0, 1], dist: 1.2 },
+      intermediateHousing: { after: ['rotorHousing', 'rotor', 'intakeManifold', 'ignitionLeads'], dir: [0, 0, 1], dist: 1.3, duration: 1.1 },
+      eccentricShaft: { after: ['intermediateHousing', 'flywheel'], dir: [0, 0, 1], dist: 1.7, duration: 1.2 },
+      rearRotor: { after: ['eccentricShaft'], dir: [0, 0, 1], dist: 1.3 },
+      rearRotorHousing: { after: ['intermediateHousing', 'sparkPlugs', 'exhaustManifold'], dir: [0, 0, 1], dist: 1.3 },
+      rearHousing: { after: ['rearRotorHousing', 'rearRotor', 'flywheel'] },
+    },
+    steps: [
+      {
+        id: 'ignition',
+        name: 'Stacca i cavi e svita le candele',
+        base: 'Si sfilano i cappucci dei cavi e si tolgono le bobine; poi, con la chiave, si svitano le quattro candele dal fianco degli statori.',
+        expert: 'Ogni cavo va segnato: scambiare leading e trailing, o un rotore con l’altro, fa scoccare la scintilla nel momento sbagliato. Leading e trailing hanno spesso gradi termici diversi, quindi anche le candele tornano ognuna nella sua sede.',
+        parts: ['ignitionLeads', 'sparkPlugs'],
+      },
+      {
+        id: 'manifolds',
+        name: 'Stacca i collettori',
+        base: 'Si staccano i due collettori dal fianco del motore: quello di aspirazione dalla piastra intermedia, quello di scarico dai due statori.',
+        expert: 'Qui si vede la distribuzione a luci del Wankel: l’aspirazione entra di lato, attraverso la piastra intermedia, e lo scarico esce dalla periferia degli statori. I dadi dello scarico, cotti dal calore, sono spesso i più duri da svitare.',
+        parts: ['intakeManifold', 'exhaustManifold'],
+      },
+      {
+        id: 'belt',
+        name: 'Togli la cinghia servizi',
+        base: 'Si allenta la cinghia e si tolgono alternatore, pompa dell’acqua e la puleggia sulla punta dell’albero: stanno tutti davanti al coperchio.',
+        expert: 'Di solito la cinghia si allenta spostando l’alternatore sul suo supporto. La puleggia è fissata sul naso dell’albero eccentrico; scollegati i manicotti, viene via anche la pompa dell’acqua.',
+        parts: ['accessoryDrive'],
+      },
+      {
+        id: 'cover',
+        name: 'Togli il coperchio anteriore',
+        base: 'Si svitano le viti lungo il bordo e si sfila il coperchio. Sotto, infilato sull’albero, c’è il contrappeso anteriore: si toglie anche quello.',
+        expert: 'Nel motore vero dietro il coperchio ci sono anche la catena della pompa dell’olio e l’ingranaggio che comanda la pompa dosatrice; qui restano l’albero e il suo contrappeso, che si sfila in avanti.',
+        parts: ['frontCoverBolts', 'frontCover', 'frontCounterweight'],
+      },
+      {
+        id: 'pan',
+        name: 'Togli la coppa dell’olio',
+        base: 'Si scarica l’olio e si stacca la coppa da sotto il motore.',
+        expert: 'La coppa è avvitata sotto tutte le fette del pacco: finché è al suo posto le tiene unite, quindi va tolta prima di separare piastre e statori.',
+        parts: ['oilPan'],
+      },
+      {
+        id: 'flywheel',
+        name: 'Smonta il volano',
+        base: 'Dietro al motore si svita il grosso dado centrale e si sfila il volano dall’albero.',
+        expert: 'Per svitare il dado bisogna tenere fermo il volano, altrimenti gira tutto l’albero. Il volano è piantato su un cono: di solito serve un estrattore per staccarlo. Al rimontaggio la chiavetta lo riporta nella posizione giusta per l’equilibratura.',
+        parts: ['flywheelNut', 'flywheel'],
+      },
+      {
+        id: 'bolts',
+        name: 'Svita i tiranti',
+        base: 'Ora si svitano i lunghi tiranti che attraversano tutto il motore: sono loro a tenere chiuso il “panino” di piastre e statori.',
+        expert: 'Si allentano poco per volta e in ordine incrociato, per non deformare il pacco. Sfilati i tiranti, le fette restano allineate solo dalle spine di centraggio tra una e l’altra.',
+        parts: ['tensionBolts'],
+      },
+      {
+        id: 'frontRotor',
+        name: 'Apri il primo rotore',
+        base: 'Si sfila la piastra anteriore con il suo pignone fisso: ecco il rotore. Poi escono il rotore, con i suoi segmenti, e lo statore.',
+        expert: 'I segmenti d’apice, angolari e laterali si tolgono e si conservano in ordine, apice per apice: ognuno si è adattato alla sua sede. Sul fianco del rotore si vedono la dentatura interna e il cuscinetto che lavora sull’eccentrico.',
+        parts: ['frontHousing', 'rotor', 'rotorHousing'],
+      },
+      {
+        id: 'shaft',
+        name: 'Sfila piastra intermedia e albero',
+        base: 'La piastra intermedia si sfila in avanti, poi si tira fuori l’albero eccentrico: il secondo rotore resta appoggiato nel suo statore.',
+        expert: 'Passaggio delicato: la piastra intermedia deve scavalcare l’eccentrico anteriore e per farlo si sposta un poco l’albero. Poi l’albero si sfila dal rotore posteriore e dal supporto nella piastra di fondo.',
+        parts: ['intermediateHousing', 'eccentricShaft'],
+      },
+      {
+        id: 'rearRotor',
+        name: 'Apri il secondo rotore',
+        base: 'Restano il rotore e lo statore posteriori: tolti quelli, sul banco c’è solo la piastra posteriore con il suo pignone fisso.',
+        expert: 'A motore aperto si controllano l’usura della cromatura sulla pista degli statori, le facce delle piastre su cui strisciano i segmenti laterali e il gioco dei segmenti nelle loro sedi.',
+        parts: ['rearRotor', 'rearRotorHousing'],
+      },
+    ],
+  },
   camera: { position: [4.1, 2.02, 7.6], target: [0.15, -0.03, -0.45] },
   thumb: { orbit: [30, 16], zoom: 1.3, view: 'section' },
 
@@ -650,22 +756,25 @@ export default {
     const lobe2 = new THREE.Mesh(lobeGeo, MAT.chrome());
     lobe2.position.set(-E, 0, Z2 + 0.06);
     shaft.add(lobe1, lobe2);
-    shaft.add(new THREE.Mesh(sector(0.42, Math.PI, Math.PI / 2, 0.65, 0.71), MAT.darkSteel())); // front counterweight
-    const pulley = new THREE.Mesh(
-      new THREE.LatheGeometry(
-        [[0.2, -0.04], [0.29, -0.04], [0.26, 0], [0.29, 0.04], [0.2, 0.04], [0.2, -0.04]].map(([r, y]) => new THREE.Vector2(r, y)),
-        48
-      ).rotateX(Math.PI / 2),
-      MAT.darkSteel()
+    const shaftThread = new THREE.Mesh(cylZ(0.09, 0.14, 20), steelMat); // threaded end for the flywheel nut
+    shaftThread.position.z = -2.0;
+    shaft.add(shaftThread);
+    // front counterweight: its own part (it has to come off the shaft before the front housing can)
+    const frontCw = new THREE.Group();
+    frontCw.add(
+      new THREE.Mesh(sector(0.42, Math.PI, Math.PI / 2, 0.65, 0.71), MAT.darkSteel()),
+      new THREE.Mesh(pipe(0.27, 0.2, 0.06, 32).rotateX(Math.PI / 2).translate(0, 0, 0.68), MAT.darkSteel())
     );
-    pulley.position.z = 0.97;
-    shaft.add(pulley);
-    cutAll(pulley);
-    const shaftNut = new THREE.Mesh(hexGeo, steelMat);
-    shaftNut.rotation.x = Math.PI / 2;
-    shaftNut.position.z = 1.03;
-    shaft.add(shaftNut);
-    cutAll(shaftNut);
+    root.add(
+      ctx.part(framed(frontCw), {
+        id: 'frontCounterweight',
+        name: 'Contrappeso anteriore',
+        base: 'Un mezzo disco pesante infilato sull’albero, nascosto dentro il coperchio anteriore. Insieme a quello sul volano compensa il “dondolio” dei due rotori, che girano sfasati uno davanti all’altro.',
+        expert:
+          'I due rotori, sfasati di 180° e distanti lungo l’asse, si equilibrano come forze ma generano una coppia che tende a far oscillare l’albero. La compensano due masse opposte alle estremità: questo contrappeso davanti e la massa di squilibrio sul volano dietro.',
+        explode: [-1.53, 0.34, 1.7],
+      })
+    );
     root.add(
       ctx.part(framed(shaft), {
         id: 'eccentricShaft',
@@ -685,13 +794,11 @@ export default {
     flywheel.add(new THREE.Mesh(extrude(fwRing, -0.04, 0.04, 8), steelMat));
     flywheel.add(new THREE.Mesh(sector(0.85, 0, Math.PI * 0.3, 0.04, 0.1), steelMat)); // opposite the rear lobe
     flywheel.add(new THREE.Mesh(cylZ(0.3, 0.2, 32), steelMat));
-    const fwBolts = [];
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * TAU;
-      fwBolts.push({ p: v3(0.22 * Math.cos(a), 0.22 * Math.sin(a), -0.11), n: v3(0, 0, -1) });
-    }
-    flywheel.add(instanced(smallHex, steelMat, fwBolts));
     flywheel.position.z = -1.85;
+    // one big nut on the shaft end (flanged hex, +Y pointing backwards out of the thread)
+    const fwNut = new THREE.Group();
+    const fwNutGeo = mergeGeometries([new THREE.CylinderGeometry(0.15, 0.15, 0.08, 6), new THREE.CylinderGeometry(0.2, 0.2, 0.016, 24).translate(0, -0.034, 0)]);
+    fwNut.add(instanced(fwNutGeo, steelMat, [{ p: v3(0, 0, -1.992), n: v3(0, 0, -1) }]));
     root.add(
       ctx.part(framed(flywheel), {
         id: 'flywheel',
@@ -700,23 +807,36 @@ export default {
         expert:
           'Volano con massa di squilibrio integrata, opposta all’eccentrico posteriore: insieme al contrappeso anteriore compensa la coppia dovuta ai due rotori sfasati. La corona dentata ingrana col motorino d’avviamento.',
         explode: [1.91, -0.42, -2.12],
+      }),
+      ctx.part(framed(fwNut), {
+        id: 'flywheelNut',
+        name: 'Dado del volano',
+        base: 'Un solo grosso dado al centro tiene il volano stretto sulla punta dell’albero eccentrico.',
+        expert:
+          'Nel 13B il volano è calettato sull’estremità conica dell’albero, con una chiavetta che ne fissa la posizione angolare, ed è serrato da un unico grande dado (chiave da 54 mm). La posizione conta, perché il volano porta la massa di equilibratura posteriore.',
+        explode: [2.1, -0.47, -2.33],
       })
     );
 
-    // ---------- Tension bolts through the whole stack ----------
-    const tbolts = new THREE.Group();
-    const rodMat = cut(MAT.steel(), { cap: false });
-    const rodGeo = cylZ(0.032, FRONT[1] - REAR[0] + 0.04, 10).translate(0, 0, (FRONT[1] + REAR[0]) / 2);
-    const heads = [];
-    for (const a of BOLT_A) {
-      const [x, y] = troch(a, RG + 0.4);
-      const r = new THREE.Mesh(rodGeo, rodMat);
-      r.position.set(x, y, 0);
-      tbolts.add(r);
-      heads.push({ p: v3(x, y, FRONT[1] + 0.02), n: v3(0, 0, 1) }, { p: v3(x, y, REAR[0] - 0.02), n: v3(0, 0, -1) });
-    }
-    tbolts.add(instanced(hexGeo, boltHeadMat, heads));
-    root.add(framed(tbolts));
+    // ---------- Tension bolts through the whole stack: heads on the front plate, threaded into the rear one ----------
+    const tbolts = instanced(
+      screw(FRONT[1] - REAR[0] - 0.01, 0.055, 0.05),
+      cut(MAT.steel(), { cap: false }),
+      BOLT_A.map((a) => {
+        const [x, y] = troch(a, RG + 0.4);
+        return { p: v3(x, y, FRONT[1] + 0.025), n: v3(0, 0, 1) };
+      })
+    );
+    root.add(
+      ctx.part(framed(tbolts), {
+        id: 'tensionBolts',
+        name: 'Tiranti del pacco',
+        base: 'Lunghe viti che attraversano tutto il motore, da una piastra all’altra: stringono piastre e statori come le fette di un panino. Tolte quelle, il motore si apre fetta per fetta.',
+        expert:
+          'Tiranti passanti in acciaio (18 nel 13B, qui meno per semplicità) che serrano a pacco piastre laterali, statori e piastra intermedia. Il pacco alterna ghisa e alluminio, che si dilatano in modo diverso: per questo si serrano poco per volta e in ordine incrociato, così le tenute dell’acqua e dell’olio lavorano in modo uniforme.',
+        explode: [-1.38, 0.31, 2.9], // still threaded through the front housing, pulled out forwards
+      })
+    );
 
     // ---------- Front cover (oil pump, front bearing), accessory drive ----------
     const coverMat = cut(MAT.aluminum());
@@ -737,11 +857,10 @@ export default {
       const a = (i / 12) * TAU;
       coverBolts.push({ p: v3(0.94 * Math.cos(a), -0.12 + 1.18 * Math.sin(a), FRONT[1] + 0.17), n: v3(0, 0, 1) });
     }
-    cover.add(instanced(smallHex, boltHeadMat, coverBolts));
     const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.19), cut(nameplate(), { cap: false }));
     plate.position.set(0, -0.82, FRONT[1] + 0.162);
     cover.add(plate);
-    const filler = new THREE.Mesh(cylZ(0.06, 0.08, 20), MAT.paint(0xe0b23a, 0.4));
+    const filler = new THREE.Mesh(cylZ(0.06, 0.08, 20), cut(MAT.paint(0xe0b23a, 0.4), { cap: false }));
     filler.position.set(-0.55, -0.85, FRONT[1] + 0.2);
     cover.add(filler);
     root.add(
@@ -752,8 +871,30 @@ export default {
         expert:
           'Coperchio in alluminio con pompa olio trascinata a catena dall’albero eccentrico e pompa dosatrice che inietta olio per i segmenti d’apice. L’olio raffredda anche l’interno dei rotori, che non sono toccati dal liquido di raffreddamento.',
         explode: [-1.68, 0.37, 1.87],
+      }),
+      ctx.part(instanced(screw(0.14, 0.034, 0.03), boltHeadMat, coverBolts), {
+        id: 'frontCoverBolts',
+        name: 'Viti del coperchio anteriore',
+        base: 'Le viti lungo il bordo che fissano il coperchio anteriore alla prima piastra.',
+        expert: 'Viti corte disposte lungo tutto il perimetro: premono il coperchio sulla sua guarnizione, perché dietro circola l’olio della pompa. Si allentano un po’ alla volta, in ordine incrociato.',
+        explode: [-1.78, 0.39, 1.98],
       })
     );
+
+    // crank pulley on the nose of the eccentric shaft: belongs to the accessory drive, turns with the shaft
+    const pulley = new THREE.Mesh(
+      new THREE.LatheGeometry(
+        [[0.2, -0.04], [0.29, -0.04], [0.26, 0], [0.29, 0.04], [0.2, 0.04], [0.2, -0.04]].map(([r, y]) => new THREE.Vector2(r, y)),
+        48
+      ).rotateX(Math.PI / 2),
+      MAT.darkSteel()
+    );
+    pulley.position.z = 0.97;
+    const shaftNut = new THREE.Mesh(hexGeo, steelMat);
+    shaftNut.rotation.x = Math.PI / 2;
+    shaftNut.position.z = 1.03;
+    const crankPulley = new THREE.Group();
+    crankPulley.add(pulley, shaftNut);
 
     const acc = new THREE.Group();
     const wp = v3(-0.55, 1.15, 0);
@@ -766,7 +907,7 @@ export default {
     wpHub.position.z = -0.07;
     wpPulley.add(new THREE.Mesh(cylZ(0.2, 0.05, 40), MAT.darkSteel()), new THREE.Mesh(rbox(0.3, 0.05, 0.02, 0.01), steelMat), wpHub);
     wpPulley.position.set(wp.x, wp.y, PZ);
-    const hose = tube([v3(wp.x, wp.y + 0.22, 0.78), v3(wp.x - 0.15, wp.y + 0.55, 0.45), v3(-0.95, 1.72, 0.05), v3(-1.02, 1.78, -0.15)], 0.055, MAT.rubber(), 32);
+    const hose = tube([v3(wp.x, wp.y + 0.22, 0.78), v3(wp.x - 0.15, wp.y + 0.55, 0.45), v3(-0.95, 1.72, 0.05), v3(-1.02, 1.78, -0.15), v3(-1.03, 1.62, -0.2)], 0.055, MAT.rubber(), 32);
     const clampGeo = new THREE.TorusGeometry(0.06, 0.01, 6, 20);
     const hoseClamp = new THREE.Mesh(clampGeo, steelMat);
     hoseClamp.position.set(wp.x - 0.04, wp.y + 0.3, 0.72);
@@ -790,7 +931,7 @@ export default {
     ring(alt.x, alt.y, 0.12);
     const hull = convexHull(pts).map(([x, y]) => v3(x, y, PZ));
     const belt = tube(hull, 0.018, MAT.rubber(), 160, true, 5);
-    acc.add(wpBody, wpPulley, hose, hoseClamp, altBody, altFins, altBracket, altPulley, belt);
+    acc.add(crankPulley, wpBody, wpPulley, hose, hoseClamp, altBody, altFins, altBracket, altPulley, belt);
     cutAll(acc); // everything here is in front of the section plane
     root.add(
       ctx.part(acc, {
@@ -837,7 +978,8 @@ export default {
     );
 
     // ---------- Spark plugs, coils, leads ----------
-    const plugs = new THREE.Group();
+    const plugs = []; // one group per plug, local +Y out of its bore (they unscrew along it)
+    const boots = new THREE.Group(); // plug caps: they belong to the leads
     const sparks = [];
     const sparkLights = [];
     const fx = new THREE.Group(); // gas, sparks and lights, in the local frame
@@ -854,16 +996,15 @@ export default {
     for (const z of [0, Z2]) {
       PLUG_A.forEach((a, i) => {
         const p = new THREE.Group();
-        p.add(
-          new THREE.Mesh(plugBody, plugMats[0]),
-          new THREE.Mesh(plugHex, plugMats[1]),
-          new THREE.Mesh(plugTip, plugMats[2]),
-          new THREE.Mesh(bootGeo, bootMats[i])
-        );
+        p.add(new THREE.Mesh(plugBody, plugMats[0]), new THREE.Mesh(plugHex, plugMats[1]), new THREE.Mesh(plugTip, plugMats[2]));
+        const boot = new THREE.Mesh(bootGeo, bootMats[i]);
         const [x, y] = troch(a, RG + 0.02);
-        p.position.set(x, y, z);
-        p.rotation.z = a - Math.PI / 2;
-        plugs.add(p);
+        for (const o of [p, boot]) {
+          o.position.set(x, y, z);
+          o.rotation.z = a - Math.PI / 2;
+        }
+        plugs.push(p);
+        boots.add(boot);
         // lead from the boot to the coil pack (world coordinates)
         const tL = [x + 1.05 * Math.cos(a), y + 1.05 * Math.sin(a)];
         const tW = toWorld(tL[0], tL[1], z);
@@ -892,16 +1033,23 @@ export default {
     coilBracket.position.copy(mid);
     coilBracket.rotation.z = Math.atan2(coilPos.y - edge.y, coilPos.x - edge.x);
     leads.add(coil, coilBracket);
-    const plugsPart = new THREE.Group();
-    plugsPart.add(framed(plugs), leads);
+    leads.add(framed(boots));
     root.add(
-      ctx.part(plugsPart, {
+      ctx.part(framed(...plugs), {
         id: 'sparkPlugs',
-        name: 'Candele leading e trailing, bobine',
-        base: 'Due candele per rotore fanno la scintilla una dopo l’altra: la camera del Wankel è lunga e una sola scintilla non basterebbe a bruciare bene tutta la miscela. Le bobine producono l’alta tensione.',
+        name: 'Candele leading e trailing',
+        base: 'Due candele per rotore fanno la scintilla una dopo l’altra: la camera del Wankel è lunga e una sola scintilla non basterebbe a bruciare bene tutta la miscela.',
         expert:
           'Candela leading (avanti nel senso di rotazione) e trailing (indietro), con anticipi diversi: la trailing scocca qualche grado d’albero dopo per accendere la miscela spinta verso la coda della camera. Le candele lavorano sempre nella zona calda dello statore; le sedi sono piccole per non far “saltare” i segmenti d’apice.',
         explode: [-1.0, 0, 0],
+      }),
+      ctx.part(leads, {
+        id: 'ignitionLeads',
+        name: 'Bobine e cavi delle candele',
+        base: 'Le bobine producono l’alta tensione e i cavi la portano alle quattro candele: ogni cavo finisce con un cappuccio infilato sulla sua candela.',
+        expert:
+          'Leading e trailing scoccano con anticipi diversi, quindi hanno circuiti separati. In molti 13B le due candele leading condividono una bobina a scintilla persa (i rotori sono sfasati di mezzo giro d’albero), mentre le trailing hanno bobine proprie; nel Renesis dell’RX-8 ogni candela ha la sua bobina.',
+        explode: [-1.6, 0.15, 0],
       })
     );
 
@@ -1108,11 +1256,13 @@ export default {
         rotor2.rotation.z = phi2 / 3;
         shaft.rotation.z = phi;
         flywheel.rotation.z = phi;
+        fwNut.rotation.z = phi;
+        frontCw.rotation.z = phi;
+        crankPulley.rotation.z = phi;
         wpPulley.rotation.z = -phi * (0.3 / 0.2);
         altPulley.rotation.z = -phi * (0.3 / 0.11);
 
         const assembled = (state.explode || 0) < 0.05;
-        tbolts.visible = assembled; // through-bolts only make sense with the stack assembled
         const rate = animRate(state.throttle);
         let inAct = 0;
         let flash = 0;

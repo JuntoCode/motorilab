@@ -136,6 +136,27 @@ function bolts(rows, mat) {
   return im;
 }
 
+// Officina fasteners: hex head + shank below it (local -Y), so +Y points out of the hole (see CONTRACT.md).
+function screwGeo(r, h, len) {
+  return mergeGeos([
+    new THREE.CylinderGeometry(r, r, h, 6),
+    new THREE.CylinderGeometry(r * 0.6, r * 0.6, len, 8).translate(0, -(h + len) / 2, 0),
+  ]);
+}
+
+// Screws as one InstancedMesh; place(d, i) poses the i-th one (local +Y out of the hole).
+function screwRing(geo, mat, count, place) {
+  const im = new THREE.InstancedMesh(geo, mat, count);
+  const d = new THREE.Object3D();
+  for (let i = 0; i < count; i++) {
+    place(d, i);
+    d.updateMatrix();
+    im.setMatrixAt(i, d.matrix);
+  }
+  im.instanceMatrix.needsUpdate = true;
+  return im;
+}
+
 // Place an object tangent to a surface of revolution: local Y = radial, at angle aDeg around X.
 function onSurface(obj, x, r, aDeg, slope = 0) {
   const a = aDeg * DEG;
@@ -464,6 +485,128 @@ export default {
     },
   ],
 
+  // Officina (see CONTRACT.md): a simplified modular strip-down, from the nacelle in to the core.
+  // The pylon stays as the base: the LP turbine hangs from its aft mount, so it comes off last.
+  disassembly: {
+    intro: 'Smontiamo il turbofan un modulo alla volta, dall\'esterno verso il cuore: gondola, fan, poi il nucleo.',
+    note:
+      'Sequenza semplificata a scopo didattico: un turbofan vero si smonta per moduli in officine specializzate, ' +
+      'seguendo il manuale del costruttore e con attrezzature dedicate.',
+    parts: {
+      nacelle: { dir: [-1, 0, 0], dist: 2.0 },
+      reverser: { dir: [1, 0, 0], dist: 1.8 },
+      fanBolts: { motion: 'unscrew', turns: 5, out: 0.06, dir: [-1, 0, 0], dist: 0.5 },
+      fan: { after: ['fanBolts'], dir: [-1, 0, 0], dist: 1.8 },
+      reduction: { after: ['fan'], dir: [-1, 0, 0], dist: 1.4 },
+      gearbox: { after: ['nacelle'], dir: [0, -1, 0], dist: 1.2 },
+      fanCaseBolts: { after: ['nacelle', 'gearbox'], motion: 'unscrew', turns: 5, out: 0.07, dir: [-1, 0, 0], dist: 0.4, duration: 1.8 },
+      fancase: { after: ['fanCaseBolts', 'nacelle', 'gearbox', 'fan'], dir: [-1, 0, 0], dist: 2.2, duration: 1.1 },
+      nozzleBolts: { motion: 'unscrew', turns: 5, out: 0.06, dir: [1, 0, 0], dist: 0.4 },
+      nozzle: { after: ['nozzleBolts'], dir: [1, 0, 0], dist: 1.6 },
+      bypass: { after: ['reverser', 'fancase'], dir: [-1, 0, 0], dist: 2.4, duration: 1.2 },
+      boosterBolts: { after: ['bypass'], motion: 'unscrew', turns: 5, out: 0.06, dir: [-1, 0, 0], dist: 0.4 },
+      booster: { after: ['boosterBolts', 'bypass', 'reduction'], dir: [-1, 0, 0], dist: 1.5 },
+      hpc: { after: ['booster'], dir: [-1, 0, 0], dist: 1.8 },
+      combustor: { after: ['hpc'], dir: [-1, 0, 0], dist: 1.8 },
+      hpt: { after: ['combustor'], dir: [-1, 0, 0], dist: 1.8 },
+      shafts: { after: ['booster', 'hpc', 'hpt', 'nozzle'], dir: [-1, 0, 0], dist: 2.4, duration: 1.2 },
+      lpt: { after: ['hpt', 'shafts', 'nozzle'], dir: [0, -1, 0], dist: 1.2 },
+    },
+    steps: [
+      {
+        id: 'nacelle',
+        name: 'Togli gondola e invertitore',
+        base:
+          'Si sfila in avanti la gondola con la presa d\'aria e si toglie da dietro l\'invertitore di spinta: ' +
+          'sotto compaiono la cassa del fan e la carenatura del nucleo.',
+        expert:
+          'Sull\'aereo gli sportelli del fan e le due metà dell\'invertitore sono incernierati al pilone e si aprono verso l\'alto ' +
+          'come un cofano; la presa d\'aria è imbullonata alla flangia anteriore della cassa del fan. Qui li togliamo interi per semplicità.',
+        parts: ['nacelle', 'reverser'],
+      },
+      {
+        id: 'fan',
+        name: 'Smonta il fan',
+        base:
+          'Si svitano le viti alla base dell\'ogiva e si sfila in avanti il fan con il suo disco. ' +
+          'Nei motori con riduttore, subito dietro c\'è il gruppo di ingranaggi.',
+        expert:
+          'Nella realtà si toglie prima l\'ogiva; le pale sono infilate una a una in cave a coda di rondine del disco e si possono ' +
+          'sostituire singolarmente, anche con il motore sotto l\'ala. Qui ogiva, pale e disco escono insieme.',
+        parts: ['fanBolts', 'fan', 'reduction'],
+      },
+      {
+        id: 'agb',
+        name: 'Stacca la scatola accessori',
+        base:
+          'Si scollegano tubi e cavi e si abbassa la scatola accessori, appesa sotto la cassa del fan con pompe, generatore e avviatore.',
+        expert:
+          'Pompe, generatore e starter sono unità sostituibili singolarmente (LRU), fissate ai loro attacchi sulla scatola. ' +
+          'Insieme alla scatola si sfila l\'albero radiale che la collega all\'albero di alta pressione.',
+        parts: ['gearbox'],
+      },
+      {
+        id: 'fancase',
+        name: 'Sfila la cassa del fan',
+        base: 'Si svitano le viti che uniscono la cassa alle palette raddrizzatrici, poi si sfila in avanti il grande anello.',
+        expert:
+          'Le palette raddrizzatrici (OGV) collegano la cassa del fan al nucleo: in molti motori moderni, oltre a raddrizzare il flusso, ' +
+          'fanno da struttura portante. Nei motori veri fan, cassa e booster formano spesso un unico grande modulo.',
+        parts: ['fanCaseBolts', 'fancase'],
+      },
+      {
+        id: 'nozzle',
+        name: 'Togli l\'ugello di scarico',
+        base: 'Si svita la corona di viti in coda e si sfilano all\'indietro l\'ugello e il cono di scarico.',
+        expert:
+          'Ugello e cono sono gusci leggeri in lega resistente al calore, imbullonati al telaio posteriore della turbina: la struttura ' +
+          'a bracci che sostiene l\'ultimo cuscinetto. In questo modello il telaio esce insieme all\'ugello.',
+        parts: ['nozzleBolts', 'nozzle'],
+      },
+      {
+        id: 'corecowl',
+        name: 'Scopri il nucleo',
+        base:
+          'Si sfila la carenatura che avvolge il nucleo, insieme alle palette raddrizzatrici: ora il generatore di gas è tutto in vista.',
+        expert:
+          'Sull\'aereo la carenatura del nucleo si apre in due metà, senza smontarla: sotto ci sono tubazioni, cablaggi, il collettore ' +
+          'del carburante e i tappi per l\'ispezione endoscopica (boroscopio) degli stadi interni.',
+        parts: ['bypass'],
+      },
+      {
+        id: 'compressors',
+        name: 'Sfila i compressori',
+        base:
+          'Si svita la flangia tra i due compressori e li si sfila in avanti: prima il booster, poi il compressore di alta pressione.',
+        expert:
+          'Le casse dei moduli sono unite da flange imbullonate, i rotori da accoppiamenti scanalati o flange. I rotori sono equilibrati ' +
+          'con grande cura: a oltre 15 000 giri/min basta uno squilibrio minimo per creare forti vibrazioni.',
+        parts: ['boosterBolts', 'booster', 'hpc'],
+      },
+      {
+        id: 'hot',
+        name: 'Smonta la parte calda',
+        base:
+          'Tocca alla parte calda: la camera di combustione con i suoi iniettori e, subito dietro, la turbina di alta pressione.',
+        expert:
+          'Compressore HP, combustore e turbina HP formano insieme il modulo "core", il generatore di gas. Le parti calde sono le più ' +
+          'sollecitate: liner, distributori e palette si ispezionano alla ricerca di cricche, bruciature e perdita del rivestimento ceramico.',
+        parts: ['combustor', 'hpt'],
+      },
+      {
+        id: 'lp',
+        name: 'Sfila gli alberi e l\'ultima turbina',
+        base:
+          'Si sfilano in avanti i due alberi coassiali e per ultima si abbassa la turbina di bassa pressione, ' +
+          'rimasta appesa all\'attacco posteriore del pilone.',
+        expert:
+          'Nei motori veri l\'albero di bassa pressione esce di solito da dietro insieme al modulo della turbina LP, a cui è unito, ' +
+          'e l\'albero HP fa parte del rotore del nucleo: qui li sfiliamo da soli per mostrarli. Resta il pilone, che appartiene all\'aereo e non al motore.',
+        parts: ['shafts', 'lpt'],
+      },
+    ],
+  },
+
   camera: { position: [-5.0, 2.3, 6.3], target: [0.1, -0.05, 0] },
 
   build(ctx) {
@@ -638,6 +781,16 @@ export default {
         h.lineTo(x0, top0);
         h.closePath();
         sh.holes.push(h);
+        // side skins over the bay, slightly recessed (the front one is cut away in the section view)
+        const skinShape = new THREE.Shape();
+        skinShape.moveTo(x0 - 0.016, yb(x0) + 0.034);
+        skinShape.lineTo(x1 + 0.016, yb(x1) + 0.034);
+        skinShape.lineTo(x1 + 0.016, top1 + 0.016);
+        skinShape.lineTo(x0 - 0.016, top0 + 0.016);
+        skinShape.closePath();
+        for (const z of [-0.076, 0.066]) {
+          pylon.add(new THREE.Mesh(new THREE.ExtrudeGeometry(skinShape, { depth: 0.01, bevelEnabled: false }).translate(0, 0, z), mPanel));
+        }
       }
       const g = new THREE.ExtrudeGeometry(sh, { depth: 0.13, bevelEnabled: true, bevelThickness: 0.014, bevelSize: 0.014, bevelSegments: 2, curveSegments: 4 });
       g.translate(0, 0, -0.065);
@@ -675,6 +828,25 @@ export default {
     fanCase.add(new THREE.Mesh(latheX([[1.074, -1.67], [1.13, -1.63], [1.13, -1.24], [1.074, -1.2], [1.074, -1.67]], 96), mKevlar));
     fanCase.add(new THREE.Mesh(latheX([[1.036, -1.6], [1.046, -1.6], [1.046, -1.3], [1.036, -1.3], [1.036, -1.6]], 96), mRub));
     fanCase.add(bolts([[-1.744, 1.1, 72], [-0.552, 1.075, 60]], mBolt));
+    fanCase.add(new THREE.Mesh(ring(-0.85, 1.062, 1.078, 0.15), mFanCase)); // OGV attachment band
+    model.add(
+      ctx.part(
+        // two rows of radial screws through the band into the outer ends of the OGVs
+        screwRing(screwGeo(0.015, 0.012, 0.04), mBolt, 72, (d, i) =>
+          onSurface(d, i < 36 ? -0.885 : -0.815, 1.084, (i % 36) * 10 + 5),
+        ),
+        {
+          id: 'fanCaseBolts',
+          name: 'Viti della cassa del fan',
+          base:
+            'Due file di viti tutto intorno alla cassa del fan: la uniscono alle palette raddrizzatrici, che a loro volta la collegano al nucleo.',
+          expert:
+            'Le estremità esterne delle palette raddrizzatrici (OGV) sono imbullonate alla cassa attraverso una fascia di rinforzo. ' +
+            'È una giunzione strutturale: attraverso le OGV i carichi del fan e della presa d\'aria passano al resto del motore.',
+          explode: [0, 0, -2.4],
+        },
+      ),
+    );
     model.add(
       ctx.part(fanCase, {
         id: 'fancase',
@@ -748,6 +920,23 @@ export default {
         explode: [-1.7, 0, 0],
       }),
     );
+    // spinner retaining screws (their own part for the Officina wrench); they turn with the fan
+    const fanBolts = new THREE.Group();
+    fanBolts.add(
+      screwRing(screwGeo(0.014, 0.012, 0.035), mBolt, 12, (d, i) => onSurface(d, -1.66, 0.27, i * 30 + 15, 1 / 3).translateY(0.005)),
+    );
+    fanRotors.push(fanBolts);
+    model.add(
+      ctx.part(fanBolts, {
+        id: 'fanBolts',
+        name: 'Viti dell\'ogiva',
+        base: 'Una corona di viti alla base dell\'ogiva: la tiene fissata al disco del fan e gira insieme a lui.',
+        expert:
+          'L\'ogiva (spinner) è avvitata al disco del fan con una corona di viti. Spesso in questa zona si montano anche i pesetti ' +
+          'di equilibratura, con cui si correggono le vibrazioni del fan senza smontarlo (trim balance).',
+        explode: [-1.7, 0, 0],
+      }),
+    );
 
     // =============== Star reduction gearbox (GTF option) ===============
     const reduction = new THREE.Group();
@@ -810,7 +999,7 @@ export default {
     }
     booster.add(new THREE.Mesh(wall([[0.53, -1.16], [0.485, -0.7]], 0.014, 72), mCase));
     booster.add(new THREE.Mesh(ring(-0.708, 0.495, 0.53, 0.014), mCase));
-    booster.add(bolts([[-0.718, 0.515, 40]], mBolt));
+    // (the bolt circle of this flange is its own part: boosterBolts, below)
     // static IGV inner shroud + bearing diaphragm (also carries the GTF gear carrier)
     booster.add(new THREE.Mesh(ring(-1.135, 0.3, 0.338, 0.07, 64), mCastCase));
     booster.add(new THREE.Mesh(ring(-1.15, 0.075, 0.3, 0.02, 64), mCastCase));
@@ -826,6 +1015,25 @@ export default {
           'Nel fan diretto gira a N1, con velocità periferiche basse; nel GTF gira con la turbina LP, circa tre volte più veloce del fan.',
         explode: [-1.0, 0, 0],
       }),
+    );
+    model.add(
+      ctx.part(
+        // axial screws through the booster / HPC flange pair, heads on the front face
+        screwRing(screwGeo(0.009, 0.01, 0.03), mBolt, 32, (d, i) => {
+          const a = ((i + 0.5) / 32) * TAU;
+          d.position.set(-0.72, 0.517 * Math.cos(a), 0.517 * Math.sin(a));
+          d.rotation.set(a, 0, Math.PI / 2); // local +Y -> -X
+        }),
+        {
+          id: 'boosterBolts',
+          name: 'Viti della flangia dei compressori',
+          base: 'Il cerchio di viti che unisce la cassa del booster a quella del compressore di alta pressione.',
+          expert:
+            'Le casse dei moduli si uniscono con flange circolari serrate da decine di bulloni ravvicinati: la giunzione deve restare ' +
+            'a tenuta e trasmettere spinta e flessione da un modulo all\'altro.',
+          explode: [-1.0, 0, 0],
+        },
+      ),
     );
 
     // =============== High-pressure compressor (HP spool) ===============
@@ -849,6 +1057,7 @@ export default {
     hpc.add(new THREE.Mesh(wall([[0.485, -0.7], [0.455, -0.66], [0.415, -0.58], [0.399, -0.55], [0.342, 0.37]], 0.014, 72), mCase));
     hpc.add(new THREE.Mesh(wall([[0.31, -0.7], [0.28, -0.66], [0.24, -0.6], [0.226, -0.57]], -0.012, 64), mCase));
     hpc.add(new THREE.Mesh(ring(-0.612, 0.132, 0.25, 0.016, 48), mCastCase)); // #3 bearing support
+    hpc.add(new THREE.Mesh(ring(-0.694, 0.487, 0.528, 0.014), mCase)); // front flange, mates with the booster's
     hpc.add(new THREE.Mesh(ring(0.362, 0.35, 0.39, 0.014), mCase));
     hpc.add(bolts([[0.352, 0.375, 40]], mBolt));
     {
@@ -1139,6 +1348,7 @@ export default {
     nozzle.add(
       new THREE.Mesh(skin([[0.33, 1.69], [0.33, 1.72], [0.3, 1.92], [0.24, 2.15], [0.15, 2.38], [0.06, 2.55], [0, 2.62]], 0.012, 64), mPlug),
     );
+    nozzle.add(new THREE.Mesh(latheX([[0.596, 1.705], [0.606, 1.705], [0.6, 1.765], [0.588, 1.765], [0.596, 1.705]], 72), mNozzle)); // attachment flange band
     nozzle.add(statorRow(1.72, 0.33, 0.556, 12, 0.08, mNozzle, 0, 0.02));
     nozzle.add(new THREE.Mesh(latheX([[0.075, 1.765], [0.3, 1.7], [0.33, 1.7], [0.33, 1.73], [0.095, 1.795], [0.075, 1.795], [0.075, 1.765]], 48), mCastCase));
     model.add(
@@ -1153,6 +1363,21 @@ export default {
           'il cuscinetto posteriore. Il getto primario esce a ~400–500 m/s e ~500–600 °C al decollo; contribuisce solo al 10–20% della spinta.',
         explode: [1.9, 0, 0],
       }),
+    );
+    model.add(
+      ctx.part(
+        // radial screws around the nozzle's front ring (none under the pylon)
+        screwRing(screwGeo(0.015, 0.012, 0.035), mBolt, 20, (d, i) => onSurface(d, 1.735, 0.603, i * 18 + 9, -0.1).translateY(0.005)),
+        {
+          id: 'nozzleBolts',
+          name: 'Viti dell\'ugello',
+          base: 'Una corona di viti che fissa l\'ugello di scarico in coda al motore.',
+          expert:
+            'L\'ugello primario è fissato alla flangia del telaio posteriore della turbina. In zona calda si usa bulloneria in leghe ' +
+            'resistenti al calore, montata con pasta antigrippaggio perché non si blocchi dopo tanti cicli termici.',
+          explode: [1.9, 0, 0],
+        },
+      ),
     );
 
     // =============== Accessory gearbox on the fan case + equipment ===============

@@ -7,6 +7,11 @@ Vista chiusa e in sezione (con superfici di taglio tratteggiate), esploso, etich
 acceleratore live, varianti (es. distribuzione a cinghia o a catena), due livelli di spiegazione (Base / Esperto),
 quiz, confronto e scorciatoie da tastiera (premi `?` nella pagina di un motore).
 
+**Officina**: ogni motore si può smontare. La guida spiega la sequenza passo-passo; le sfide la trasformano in un
+minigioco a punti sul modello 3D: **Smonta** (mano = trascini il pezzo lungo la freccia, chiave = tieni premuto su
+viti e candele; ordine o attrezzo sbagliato costano punti), **Rimonta** (i pezzi partono dal banco, con anteprima
+"fantasma" di dove vanno) e **Trova il pezzo**. Tempo, combo, stelle e record restano salvati nel browser.
+
 Sito statico: HTML + CSS + JavaScript (moduli ES) con [Three.js](https://threejs.org) r170 caricato da CDN. Nessuna build.
 
 ## Avvio in locale
@@ -26,7 +31,10 @@ Poi apri http://localhost:5173. Serve un server: aprire `index.html` con doppio 
 
 ## Struttura
 
-- `js/core/viewer.js` – scena Three.js: camera, luci, spaccato, esploso, selezione pezzi, fasi.
+- `js/core/viewer.js` – scena Three.js: camera, luci, spaccato, esploso, selezione pezzi, fasi, smontaggio.
+- `js/core/fx.js` – ambiente luci da studio e post-processing (occlusione ambientale che rispetta lo spaccato,
+  contorno dei pezzi, bloom); si abbassa da solo sui dispositivi lenti.
+- `js/game/` – i giochi dell'officina (`workshop.js`), i suoni sintetizzati (`sfx.js`) e i record (`records.js`).
 - `js/core/helpers.js` – materiali, geometrie e particelle condivise.
 - `js/engines/*.js` – un file per motore; il formato è descritto in `js/engines/CONTRACT.md`.
 - `js/catalog.js` – famiglie e motori mostrati nel sito (quelli senza `load` appaiono come "in arrivo").
@@ -36,6 +44,8 @@ Poi apri http://localhost:5173. Serve un server: aprire `index.html` con doppio 
 
 - `#/anteprima/<file>` apre un motore non ancora presente nel catalogo.
 - `js/dev/check.js` controlla un modulo (errori, NaN, triangoli, particelle).
+- `js/dev/play.js` gioca da solo la sfida "Smonta" con un puntatore simulato: verifica che ogni pezzo di un
+  `disassembly` sia raggiungibile.
 - `js/dev/capture.js` salva foto dei modelli in `.claude/shots/` e le miniature delle schede in `assets/thumbs/`.
 - `.claude/gen-meta.py` rigenera `js/catalog-meta.js` (nomi e frasi delle schede) dopo aver modificato i motori.
 - `.claude/register.py` collega un motore al catalogo, `.claude/camzoom.py` regola l'inquadratura iniziale.

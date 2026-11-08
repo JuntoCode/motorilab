@@ -339,9 +339,23 @@ function flangeX(x, rIn, rOut, w, seg = 72) {
   return latheX([[rIn, x - w / 2], [rOut, x - w / 2], [rOut, x + w / 2], [rIn, x + w / 2], [rIn, x - w / 2]], seg);
 }
 
-// Bolt heads as one InstancedMesh: add(pos, normal) then mesh().
-function boltSet(mat, r = 0.011, h = 0.012) {
-  const geo = new THREE.CylinderGeometry(r, r, h, 6);
+// Hex head with its shank below (local -Y): a bolt backing out shows its thread. +Y points out of the hole.
+function screwGeo(r, h, len) {
+  return mergeGeos([new THREE.CylinderGeometry(r, r, h, 6), new THREE.CylinderGeometry(r * 0.6, r * 0.6, len, 8).translate(0, -h / 2 - len / 2, 0)]);
+}
+
+// Retaining nut: washer face, hex body and domed cap. Origin 0.7 h above the seat, +Y out.
+function capNutGeo(r, h) {
+  return mergeGeos([
+    new THREE.CylinderGeometry(r, r, h, 6),
+    new THREE.CylinderGeometry(r * 1.2, r * 1.2, h * 0.2, 24).translate(0, -h * 0.6, 0),
+    new THREE.SphereGeometry(r * 0.72, 16, 6, 0, TAU, 0, Math.PI / 2).scale(1, 0.6, 1).translate(0, h / 2, 0),
+  ]);
+}
+
+// Bolt heads as one InstancedMesh: add(pos, normal) then mesh(). `geo` replaces the plain hex head
+// (origin h / 2 above the surface, local +Y along the normal).
+function boltSet(mat, r = 0.011, h = 0.012, geo = new THREE.CylinderGeometry(r, r, h, 6)) {
   const list = [];
   const q = new THREE.Quaternion();
   const one = new THREE.Vector3(1, 1, 1);
@@ -639,6 +653,121 @@ export default {
     },
   ],
 
+  // Officina (see CONTRACT.md): rotors first, then the engine modules slide off the rear along the shafts.
+  // The roof structure, the main gearbox and the mast stay as the base. Simplified and educational.
+  disassembly: {
+    intro: "Smontiamo l'elicottero dall'esterno verso l'interno: prima i rotori, poi i moduli del motore, sfilati uno alla volta da dietro.",
+    note:
+      "Sequenza semplificata a scopo didattico: sugli elicotteri veri ogni intervento segue il manuale di manutenzione del costruttore, con i suoi attrezzi, controlli e serraggi.",
+    parts: {
+      tailRotorNut: { motion: 'unscrew', turns: 5, out: 0.08, dir: [0, 0, 1], dist: 0.3 },
+      tailRotor: { after: ['tailRotorNut'], dir: [0, 0, 1], dist: 0.7 },
+      tailDrive: { after: ['tailRotor'], dir: [0, 0, 1], dist: 0.9 },
+      mastNut: { motion: 'unscrew', turns: 6, out: 0.12, dir: [0, 1, 0], dist: 0.35 },
+      rotorHead: { after: ['mastNut'], dir: [0, 1, 0], dist: 1.0, duration: 1.2 },
+      swashplate: { after: ['rotorHead'], dir: [0, 1, 0], dist: 1.0 },
+      rotorMast: { after: ['rotorHead', 'swashplate'], dir: [0, 1, 0], dist: 1.2 },
+      accessories: { dir: [0, 1, 0], dist: 0.7 },
+      caseBolts: { motion: 'unscrew', turns: 6, out: 0.07, dir: [0, 0.3, 1], dist: 0.35, duration: 2 },
+      exhaust: { after: ['caseBolts'], dir: [1, 0.3, 0], dist: 1.0 },
+      powerTurbine: { after: ['caseBolts', 'exhaust'], dir: [1, 0, 0], dist: 1.0 },
+      ggTurbine: { after: ['caseBolts', 'powerTurbine'], dir: [1, 0, 0], dist: 1.0 },
+      combustor: { after: ['caseBolts', 'ggTurbine', 'accessories'], dir: [1, 0, 0], dist: 1.2 },
+      compressor: { after: ['combustor', 'accessories'], dir: [1, 0, 0], dist: 1.2 },
+      intake: { after: ['compressor'], dir: [1, 0, 0], dist: 1.0 },
+      driveBolts: { motion: 'unscrew', turns: 5, out: 0.04, dir: [0, 0, 1], dist: 0.3 },
+      shafts: { after: ['driveBolts', 'compressor', 'ggTurbine', 'powerTurbine'], dir: [1, 0, 0], dist: 1.4 },
+      driveShaft: { after: ['driveBolts', 'shafts', 'intake'], dir: [1, 0, 0], dist: 0.9 },
+      mainGearbox: { after: ['rotorMast', 'driveShaft', 'tailDrive'], dir: [0, 1, 0], dist: 1.0 },
+    },
+    steps: [
+      {
+        id: 'tailRotor',
+        name: 'Togli il rotore di coda',
+        base: "Si svita il dado al centro e si sfila di lato il rotore di coda dal suo alberino.",
+        expert:
+          "Prima si scollega il comando del passo, che arriva alle pale attraverso l'albero della scatola di coda; tolto il dado di ritegno, il mozzo si sfila dalle scanalature.",
+        parts: ['tailRotorNut', 'tailRotor'],
+      },
+      {
+        id: 'tailDrive',
+        name: 'Stacca la trasmissione di coda',
+        base: "Si libera il lungo albero che corre sotto il motore, con i suoi supporti e le due scatole di ingranaggi sulla deriva.",
+        expert:
+          "L'albero di coda è fatto a tronchi uniti da giunti flessibili: nella realtà si smonta un tronco alla volta, staccando i cuscinetti di supporto dalla struttura. " +
+          "La scatola intermedia e quella di coda sono imbullonate alla deriva.",
+        parts: ['tailDrive'],
+      },
+      {
+        id: 'rotorHead',
+        name: 'Togli la testa del rotore',
+        base: "Si svita il grosso dado in cima all'albero e si solleva il mozzo con le pale: nella realtà serve una gru.",
+        expert:
+          "Prima si staccano le aste di comando del passo dalle squadrette (e di solito si smontano le pale, una alla volta); tolto il dado, il mozzo si sfila verso l'alto " +
+          "dalle scanalature dell'albero rotore.",
+        parts: ['mastNut', 'rotorHead'],
+      },
+      {
+        id: 'swashplate',
+        name: 'Sfila il piatto oscillante',
+        base: "Senza il mozzo, il piatto oscillante con le sue astine e i tre attuatori si sfila verso l'alto lungo l'albero.",
+        expert:
+          "Piatto fisso, piatto rotante e snodo sferico formano un unico insieme che scorre lungo l'albero rotore, che invece resta nel riduttore. " +
+          "Qui escono insieme anche i tre servoattuatori, che nella realtà sono fissati alla scatola del riduttore.",
+        parts: ['swashplate'],
+      },
+      {
+        id: 'accessories',
+        name: 'Togli la scatola accessori',
+        base: "Si staccano il tubo del carburante e il cavo di accensione, poi si solleva la scatola accessori con avviatore, alternatore e regolatore del carburante.",
+        expert:
+          "La scatola accessori è un modulo a sé, trascinato dal generatore di gas con un alberino radiale che si sfila insieme a lei. " +
+          "Con lei vengono via l'unità idromeccanica (HMU), l'avviatore e l'alternatore del FADEC.",
+        parts: ['accessories'],
+      },
+      {
+        id: 'hotSection',
+        name: 'Sfila scarico e turbine',
+        base:
+          "Svitate le corone di bulloni sulle flange, i moduli escono da dietro, uno dopo l'altro: lo scarico, la turbina libera e la turbina del generatore di gas.",
+        expert:
+          "Il motore è modulare: ogni modulo si separa sulla sua flangia e si sfila lungo l'asse. Tra la turbina libera e il generatore di gas non c'è alcun collegamento meccanico, " +
+          "le unisce solo il flusso dei gas: per questo la turbina di potenza può essere un modulo separato.",
+        parts: ['caseBolts', 'exhaust', 'powerTurbine', 'ggTurbine'],
+      },
+      {
+        id: 'combustor',
+        name: 'Sfila il combustore',
+        base: "Tolte le turbine, la camera di combustione scorre all'indietro: dentro si vedono l'anello forato dove brucia la fiamma e gli iniettori.",
+        expert:
+          "La cassa esterna regge la pressione; il tubo di fiamma interno (liner) contiene la combustione ed è raffreddato dall'aria che entra dai suoi fori. " +
+          "Con il combustore escono anche il collettore del carburante, gli iniettori e le candele di accensione.",
+        parts: ['combustor'],
+      },
+      {
+        id: 'coldSection',
+        name: "Sfila compressore e presa d'aria",
+        base:
+          "Restano i pezzi \"freddi\": il compressore, con le sue palette e la girante, e la presa d'aria con la griglia. Anche loro si sfilano all'indietro, lungo gli alberi.",
+        expert:
+          "In molti motori la cassa del compressore assiale è divisa in due metà, che si aprono per ispezionare e sostituire le palette. " +
+          "Qui, per semplicità, il compressore esce in un pezzo solo, con il suo rotore e il diffusore.",
+        parts: ['compressor', 'intake'],
+      },
+      {
+        id: 'shafts',
+        name: 'Sfila gli alberi',
+        base:
+          "Si svitano i bulloni del giunto e si sfilano i due alberi coassiali del motore; per ultimo esce l'albero di trasmissione con la ruota libera. " +
+          "Sul tetto restano la struttura e il riduttore principale con l'albero del rotore.",
+        expert:
+          "Il giunto flessibile separa l'albero di potenza del motore dall'albero ad alta velocità verso il riduttore. La ruota libera è su questo tratto: " +
+          "trasmette la coppia solo dal motore al rotore, e in autorotazione lascia girare il rotore a motore fermo.",
+        parts: ['driveBolts', 'shafts', 'driveShaft'],
+      },
+    ],
+  },
+
   camera: { position: [-3.4, 2.7, 6.7], target: [0.05, -0.2, 0] },
 
   build(ctx) {
@@ -755,6 +884,7 @@ export default {
     compRotor.add(impeller(impHub, impShroud, 13, ds(MAT.titanium()), { wrap: 0.75, from: 0.42, n: 10 }).rotateX(TAU / 26));
     comp.add(new THREE.Mesh(wall([[0.236, 0.27], [0.24, 0.31], [0.263, 0.352], [0.31, 0.384], [0.37, 0.392], [0.44, 0.392], [0.47, 0.41], [0.478, 0.45]], 0.012, 72), mCase));
     comp.add(new THREE.Mesh(wall([[0.37, 0.447], [0.42, 0.45], [0.432, 0.49]], 0.01, 72), mCase));
+    comp.add(new THREE.Mesh(flangeX(0.437, 0.488, 0.527, 0.02), mCase)); // mates with the combustor flange
     {
       const vane = new THREE.BoxGeometry(0.05, 0.065, 0.007).translate(0, 0.0325, 0).rotateX(-0.75);
       const vanes = mergeRing(vane, mStator, 18, 0.372);
@@ -779,7 +909,6 @@ export default {
     const comb = new THREE.Group();
     comb.add(new THREE.Mesh(wall([[0.478, 0.45], [0.478, 0.94], [0.45, 0.99], [0.38, 1.02], [0.3, 1.03]], 0.012, 72), mCase));
     comb.add(new THREE.Mesh(flangeX(0.46, 0.488, 0.53, 0.026), mCase));
-    comb.add(boltSet(mBolt, 0.01, 0.011).ringX(0.446, 0.51, 30, -1).mesh());
     comb.add(holesX(mHole, [[0.66, 0.399, 26], [0.78, 0.399, 26, 0.12], [0.7, 0.209, 16], [0.82, 0.209, 16, 0.2]], 0.01));
     for (const a of [300 * DEG, 60 * DEG]) {
       const plug = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.024, 0.08, 12), mAccDark);
@@ -844,7 +973,6 @@ export default {
     }
     ggt.add(new THREE.Mesh(wall([[0.282, 0.96], [0.287, 1.08], [0.296, 1.18]], 0.012, 72), mCaseDark));
     ggt.add(new THREE.Mesh(flangeX(1.175, 0.305, 0.345, 0.022), mCaseDark));
-    ggt.add(boltSet(mBolt, 0.009, 0.01).ringX(1.163, 0.327, 24, -1).mesh());
     core.add(
       ctx.part(ggt, {
         id: 'ggTurbine',
@@ -872,7 +1000,6 @@ export default {
     }
     pt.add(new THREE.Mesh(wall([[0.296, 1.18], [0.31, 1.27], [0.33, 1.38], [0.342, 1.44]], 0.012, 72), mCase));
     pt.add(new THREE.Mesh(flangeX(1.435, 0.352, 0.395, 0.022), mCase));
-    pt.add(boltSet(mBolt, 0.009, 0.01).ringX(1.423, 0.375, 26, -1).mesh());
     core.add(
       ctx.part(pt, {
         id: 'powerTurbine',
@@ -885,6 +1012,28 @@ export default {
           "Eroga ~1.400 kW sul T700-701D; in caso di avaria di un motore l'altro sale ai regimi OEI (30 s, 2 min, continuo) per alcune decine di secondi o minuti.",
         explode: [0.7, 0, 0],
       }),
+    );
+
+    // ---------- Module flange bolts (their own part: the wrench takes them out) ----------
+    core.add(
+      ctx.part(
+        boltSet(mBolt, 0.0095, 0.011, screwGeo(0.0095, 0.011, 0.058))
+          .ringX(0.427, 0.508, 30, -1) // compressor / combustor
+          .ringX(1.164, 0.327, 24, -1) // gas-generator turbine / power turbine
+          .ringX(1.424, 0.375, 26, -1) // power turbine / exhaust
+          .mesh(),
+        {
+          id: 'caseBolts',
+          name: 'Bulloni delle flange del motore',
+          base:
+            "Tre corone di bulloni che tengono uniti i \"pezzi\" del motore: compressore e combustore, le due turbine, turbina libera e scarico. " +
+            "Il motore è fatto a moduli, che si separano proprio su queste flange.",
+          expert:
+            "Flange circonferenziali imbullonate tra le casse dei moduli. La costruzione modulare (sul T700: modulo accessori, sezione fredda, sezione calda e turbina di potenza) " +
+            "permette di sostituire un modulo senza smontare tutto il motore; nella sezione calda i bulloni sono in leghe resistenti al calore.",
+          explode: [0.35, 0, 0],
+        },
+      ),
     );
 
     // ---------- Shafts (PT inside GG) ----------
@@ -948,16 +1097,32 @@ export default {
     const driveSpin = new THREE.Group();
     driveSpin.position.y = YI;
     drive.add(driveSpin);
+    const X_CPL = -0.482; // engine-side coupling
     {
       const x0 = XM + 0.36;
       const x1 = -0.45;
       driveSpin.add(new THREE.Mesh(latheX([[0.03, x0], [0.045, x0], [0.045, x1], [0.03, x1]], 24), mShaft));
-      for (const x of [x0 + 0.06, x1 - 0.05]) {
-        driveSpin.add(new THREE.Mesh(latheX([[0.045, x - 0.03], [0.1, x - 0.025], [0.1, x - 0.008], [0.06, x], [0.1, x + 0.008], [0.1, x + 0.025], [0.045, x + 0.03]], 32), mCoupling));
+      // flexible couplings: inside the gearbox nose and, wider, bolted to the engine output
+      for (const [x, r] of [[x0 + 0.06, 0.1], [X_CPL, 0.125]]) {
+        driveSpin.add(new THREE.Mesh(latheX([[0.045, x - 0.03], [r, x - 0.025], [r, x - 0.008], [r * 0.6, x], [r, x + 0.008], [r, x + 0.025], [0.045, x + 0.03]], 32), mCoupling));
       }
-      // freewheel unit housing at the engine output
-      driveSpin.add(new THREE.Mesh(latheX([[0.045, -0.62], [0.11, -0.6], [0.12, -0.55], [0.11, -0.5], [0.045, -0.48]], 32), mGear2));
+      // freewheel unit housing, half inside the gearbox nose
+      driveSpin.add(new THREE.Mesh(latheX([[0.045, -0.62], [0.095, -0.6], [0.1, -0.565], [0.095, -0.54], [0.045, -0.525]], 32), mGear2));
     }
+    const driveBolts = boltSet(mBolt, 0.012, 0.014, screwGeo(0.012, 0.014, 0.05)).ringX(X_CPL - 0.025, 0.103, 6, -1).mesh();
+    driveBolts.position.y = YI;
+    model.add(
+      ctx.part(driveBolts, {
+        id: 'driveBolts',
+        name: 'Bulloni del giunto di trasmissione',
+        base:
+          "I bulloni che uniscono l'albero di trasmissione all'uscita del motore, attraverso un giunto flessibile che sopporta piccoli disallineamenti.",
+        expert:
+          "Bulloni del giunto flessibile (a lamelle o a membrana) tra l'uscita del motore e l'albero ad alta velocità verso il riduttore. Il giunto trasmette la coppia " +
+          "a ≈ 20.000 giri/min e assorbe i piccoli disallineamenti dovuti alle dilatazioni termiche e ai movimenti del riduttore sui suoi attacchi.",
+        explode: [-0.15, -0.5, 0],
+      }),
+    );
     model.add(
       ctx.part(drive, {
         id: 'driveShaft',
@@ -1147,11 +1312,35 @@ export default {
     const mast = new THREE.Group();
     mast.position.x = XM;
     head.add(mast);
-    {
-      mast.add(new THREE.Mesh(lathe([[0.03, YS + 0.05], [0.052, YS + 0.05], [0.052, YH + 0.06], [0.07, YH + 0.1], [0.03, YH + 0.12]], 32), mShaft2));
-      const hubDisc = new THREE.Mesh(lathe([[0.05, YH - 0.04], [0.16, YH - 0.035], [0.17, YH], [0.16, YH + 0.035], [0.05, YH + 0.04]], 48), mHub);
-      mast.add(hubDisc);
-    }
+    mast.add(new THREE.Mesh(lathe([[0.05, YH - 0.04], [0.16, YH - 0.035], [0.17, YH], [0.16, YH + 0.035], [0.05, YH + 0.04]], 48), mHub));
+    // mast (stays in the gearbox) with its threaded end, and the nut that holds the hub on it
+    const mastShaft = new THREE.Mesh(lathe([[0.03, YS + 0.05], [0.052, YS + 0.05], [0.052, YH + 0.04], [0.036, YH + 0.045], [0.036, YH + 0.1], [0.03, YH + 0.1]], 32), mShaft2);
+    mastShaft.position.x = XM;
+    const mastNut = boltSet(mBolt, 0, 0.07, capNutGeo(0.07, 0.05)).add(new THREE.Vector3(0, YH + 0.04, 0), _up).mesh();
+    mastNut.position.x = XM;
+    model.add(
+      ctx.part(mastShaft, {
+        id: 'rotorMast',
+        name: 'Albero del rotore (mast)',
+        base:
+          "L'albero verticale che esce dal riduttore e porta in cima il mozzo con le pale. Fa due lavori insieme: fa girare il rotore e regge l'elicottero, " +
+          "che in volo resta letteralmente appeso a lui.",
+        expert:
+          "Albero rotore cavo in acciaio ad alta resistenza, trascinato dal portasatelliti dello stadio epicicloidale e sostenuto dai cuscinetti nel coperchio del riduttore. " +
+          "Trasmette la coppia, la portanza e i momenti del mozzo; il mozzo è calettato su scanalature e bloccato in cima da un dado. Lungo il tratto esterno scorre il piatto oscillante.",
+        explode: [0, 0.9, 0],
+      }),
+      ctx.part(mastNut, {
+        id: 'mastNut',
+        name: "Dado dell'albero rotore",
+        base:
+          "Il grosso dado in cima all'albero: tiene il mozzo, con tutte le pale, bloccato sull'albero del rotore. È un pezzo solo, ma è tra i più controllati di tutto l'elicottero.",
+        expert:
+          "Dado di ritegno del mozzo (mast nut): blocca assialmente il mozzo sulle scanalature dell'albero rotore ed è assicurato contro lo svitamento da un fermo meccanico. " +
+          "Dove un unico dado trattiene tutto il rotore, i piloti lo chiamano scherzosamente \"Jesus nut\"; molti rotori moderni usano invece una corona di bulloni tra mozzo e albero.",
+        explode: [0, 1.45, 0],
+      }),
+    );
     const BL = 1.25;
     const BR0 = 0.42;
     const RT_TWIST = 0.17;
@@ -1282,6 +1471,19 @@ export default {
           "Rotore di coda a 4 pale a passo variabile, ≈ 5 volte i giri del rotore principale, comandato dai pedali tramite un'asta che attraversa l'albero della TGB. " +
           "Assorbe ~10–15% della potenza in hovering. Alternative: fenestron intubato (Airbus) e NOTAR. Qui il passo di coda segue il collettivo per mostrare la compensazione di coppia.",
         explode: [0.6, 0.1, 0.3],
+      }),
+    );
+    const trNut = boltSet(mBolt, 0, 0.035, capNutGeo(0.03, 0.025)).add(new THREE.Vector3(0, 0, 0.04), new THREE.Vector3(0, 0, 1)).mesh();
+    trNut.position.copy(trSpin.position);
+    model.add(
+      ctx.part(trNut, {
+        id: 'tailRotorNut',
+        name: 'Dado del rotore di coda',
+        base: "Il dado al centro del rotore di coda: blocca il mozzo con le quattro pale sull'alberino che esce dalla scatola di coda.",
+        expert:
+          "Dado di ritegno del mozzo del rotore di coda sull'albero di uscita della scatola a 90° (TGB), con rondella e fermo di sicurezza. " +
+          "La coppia passa dalle scanalature tra albero e mozzo; il dado lo tiene soltanto in posizione lungo l'asse.",
+        explode: [0.6, 0.1, 0.55],
       }),
     );
 
@@ -1500,6 +1702,7 @@ export default {
         for (const o of ggRot) o.rotation.x = ggAng;
         for (const o of ptRot) o.rotation.x = ptAng;
         driveSpin.rotation.x = ptAng;
+        driveBolts.rotation.x = ptAng;
         pinion.rotation.x = Math.PI / NP_IN - Math.PI + ptAng;
         wheel.rotation.y = wheelAng;
         tailPinion.rotation.x = Math.PI / NTP - Math.PI - (wheelAng * NT) / NTP;
@@ -1508,9 +1711,12 @@ export default {
         carrier.rotation.y = rotorAng;
         for (let i = 0; i < 4; i++) planets[i].rotation.y = planetPh[i] - (rotorAng * NR) / NPL;
         mast.rotation.y = rotorAng;
+        mastShaft.rotation.y = rotorAng;
+        mastNut.rotation.y = rotorAng;
         swRot.rotation.y = rotorAng;
         linkSpin.rotation.y = rotorAng;
         trSpin.rotation.z = rotorAng * 5;
+        trNut.rotation.z = rotorAng * 5;
 
         // collective pitch -> swashplate height -> pitch links -> horns
         const th = lerp(2, 16, spool) * DEG;

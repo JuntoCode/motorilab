@@ -16,6 +16,7 @@
 //   orbit      [azimuthDeg, elevationDeg] around the target; default = the engine's own camera
 //   zoom       >1 moves closer (default 1)
 //   target     [x,y,z] look-at point override
+//   fx         true = render with the post-processing chain (AO, bloom, outline)
 //   width, height (default 1200 x 750), format 'png' | 'webp', path (full output path)
 import * as THREE from 'three';
 import { EngineViewer } from '../core/viewer.js';
@@ -27,14 +28,14 @@ export async function shoot(file, o = {}) {
   const host = document.createElement('div');
   Object.assign(host.style, { position: 'fixed', left: '0', top: '0', width: width + 'px', height: height + 'px', opacity: '0', pointerEvents: 'none', zIndex: '-1' });
   document.body.appendChild(host);
-  const v = new EngineViewer(host, { interactive: false });
+  const v = new EngineViewer(host, { interactive: false, fx: !!o.fx }); // fx: true = with post-processing, as on the engine page
   v.manual = true;
   v.renderer.setPixelRatio(1);
   try {
     v.load(def);
     v.resize();
     // Screenshots get the site's dark backdrop; thumbnails (webp) stay transparent for the card gradient.
-    if ((o.format || 'png') === 'png' && !o.transparent) v.scene.background = new THREE.Color(0x121a2a);
+    if ((o.format || 'png') === 'png' && !o.transparent && !o.fx) v.scene.background = new THREE.Color(0x121a2a);
     for (const [k, val] of Object.entries(o.option || {})) v.setOption(k, val);
     v.setCutaway((o.view || 'section') === 'section', true);
     v.setThrottle(o.throttle ?? 0.5);
@@ -84,4 +85,19 @@ export async function thumbs(files) {
     );
   }
   return out;
+}
+
+// Saves what the live engine page shows right now (also in a hidden tab, where the page does not repaint):
+//   const { snapLive } = await import('/js/dev/capture.js?t=' + Date.now());
+//   __viewer.manual = true; __viewer.step(0.05); ... await snapLive('officina-step2');
+export async function snapLive(name = 'live', v = window.__viewer) {
+  const bg = v.scene.background;
+  v.scene.background = new THREE.Color(0x121a2a);
+  v.step(0);
+  const data = v.renderer.domElement.toDataURL('image/png');
+  v.scene.background = bg;
+  const path = `.claude/shots/${name}.png`;
+  const res = await fetch(`/__save?path=${encodeURIComponent(path)}`, { method: 'POST', body: data });
+  if (!res.ok) throw new Error(`save failed: ${res.status}`);
+  return path;
 }
