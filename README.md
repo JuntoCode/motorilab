@@ -1,5 +1,7 @@
 # MotoriLab
 
+**Sito online:** https://juntocode.github.io/motorilab/
+
 Visualizzatore 3D interattivo che spiega come funzionano i motori dei mezzi di oggi: auto, aerei, razzi e treni.
 Vista chiusa e in sezione (con superfici di taglio tratteggiate), esploso, etichette dei pezzi, fasi passo-passo,
 acceleratore live, varianti (es. distribuzione a cinghia o a catena), due livelli di spiegazione (Base / Esperto),
