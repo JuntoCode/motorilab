@@ -38,6 +38,12 @@ const ICON = {
   next: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7"/></svg>',
   cut: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a9 9 0 1 0 0 18" /><path d="M12 3v18" stroke-dasharray="2 2.5"/><path d="M12 3a9 9 0 0 1 0 18" opacity=".35"/></svg>',
   tag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.5" fill="currentColor"/></svg>',
+  down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>',
+  closed: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="7" width="16" height="12" rx="2"/><path d="M8 7V4h8v3M4 12h16"/></svg>',
+  explode: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M4 4l3 3M20 4l-3 3M4 20l3-3M20 20l-3-3M4 4h3M4 4v3M20 4h-3M20 4v3M4 20h3M4 20v-3M20 20h-3M20 20v-3"/></svg>',
+  info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>',
+  zoom: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4M8 11h6M11 8v6"/></svg>',
+  tap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3" fill="currentColor"/><circle cx="12" cy="12" r="8" stroke-dasharray="3 3"/></svg>',
   reset: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4h4"/></svg>',
 };
 function setBgIfExists(el, url, prop) {
@@ -80,10 +86,10 @@ function renderHome(params = new URLSearchParams()) {
       <div>
         <div class="eyebrow">Laboratorio 3D interattivo</div>
         <h1>Guarda <em>dentro</em> i motori che muovono il mondo.</h1>
-        <p>${total} motori di auto, moto, aerei, razzi, treni e navi: aprili in sezione, smontali pezzo per pezzo, rallenta il tempo e scopri cosa succede in ogni istante.</p>
+        <p>Auto, moto, aerei, razzi, treni e navi. Aprili, smontali e guarda cosa succede dentro.</p>
         <div class="cta">
           <a class="btn primary" href="#/motore/petrol4t">Inizia dal motore dell’auto</a>
-          <a class="btn" href="#esplora" data-scroll>Tutti i ${total} motori</a>
+          <a class="btn ghost" href="#esplora" data-scroll>Tutti i ${total} motori</a>
         </div>
         <div class="hero-stats">
           <div><b>${total}</b><span>motori in 3D</span></div>
@@ -96,21 +102,11 @@ function renderHome(params = new URLSearchParams()) {
   setBgIfExists(hero, 'assets/img/hero.png', '--hero-img');
   app.appendChild(hero);
 
-  app.appendChild(
-    h(`<section class="howto">
-      <div><b>Chiusa o in sezione</b><span>Guarda il motore com’è dal vero, poi taglialo a metà.</span></div>
-      <div><b>Tocca un pezzo</b><span>Nome e funzione di ogni componente, con etichette in 3D.</span></div>
-      <div><b>Esploso</b><span>Separa tutti i pezzi e guarda come si montano.</span></div>
-      <div><b>Passo-passo</b><span>Ferma il motore e segui ogni fase con calma.</span></div>
-    </section>`)
-  );
-
   const fam0 = params.get('famiglia') || 'tutti';
   const explore = h(`<section class="explore" id="esplora">
       <div class="explore-head">
         <div>
           <h2>Esplora i motori</h2>
-          <p>Filtra per famiglia o cerca per nome, mezzo o tecnologia.</p>
         </div>
         <label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
           <input type="search" placeholder="Cerca: diesel, elica, razzo…" aria-label="Cerca un motore"></label>
@@ -148,19 +144,17 @@ function renderHome(params = new URLSearchParams()) {
       if (!list.length) continue;
       shown += list.length;
       const g = h(`<div class="group">
-          <div class="group-head"><div class="cover"></div><div><h3>${esc(f.name)}</h3><p>${esc(f.desc)}</p></div></div>
+          <div class="group-head"><div class="cover"></div><h3>${esc(f.name)}</h3></div>
           <div class="cards"></div>
         </div>`);
       setBgIfExists(g.querySelector('.cover'), f.image, 'background-image', true);
       const cards = g.querySelector('.cards');
       for (const e of list) {
-        const m = META[e.id] || {};
         const c = h(`<a class="card" href="#/motore/${e.id}">
-            <div class="thumb"><span class="fam">${esc(f.name)}</span></div>
+            <div class="thumb"></div>
             <div class="card-body">
               <h4>${esc(e.short)}</h4>
               <small>${esc(e.vehicle)}</small>
-              <p>${esc(m.tagline || '')}</p>
             </div>
           </a>`);
         setBgIfExists(c.querySelector('.thumb'), `assets/thumbs/${e.id}.webp`, 'background-image', true);
@@ -195,8 +189,18 @@ function renderHome(params = new URLSearchParams()) {
 }
 
 // ---------- Engine page ----------
+// Model first: the 3D view fills the page; controls float over it with icons and one-word labels;
+// the long explanations live in a "Scopri di più" sheet that is closed by default.
+const firstSentence = (html) => {
+  const t = String(html).replace(/<[^>]+>/g, '').trim();
+  const m = t.match(/^.{20,}?[.!?](?=\s|$)/);
+  return m ? m[0] : t;
+};
+const isMobile = () => matchMedia('(max-width: 860px)').matches;
+const isTouch = () => matchMedia('(hover: none)').matches;
+
 async function renderEngine(id, preview = false) {
-  app.innerHTML = `<div class="engine-page"><div class="stage main"><div class="loading">Caricamento motore…</div></div><aside class="panel"></aside></div>`;
+  app.innerHTML = `<div class="engine-page"><div class="stage main"><div class="loading">Caricamento motore…</div></div></div>`;
   let def;
   try {
     def = preview ? (await import(`./engines/${id}.js?t=${Date.now()}`)).default : await loadEngine(id);
@@ -207,7 +211,6 @@ async function renderEngine(id, preview = false) {
   }
   const page = app.querySelector('.engine-page');
   const stage = page.querySelector('.stage');
-  const panel = page.querySelector('.panel');
   stage.innerHTML = '';
   const fam = familyOf(def.id) || { name: def.family };
   document.title = `${def.name} – MotoriLab`;
@@ -218,9 +221,7 @@ async function renderEngine(id, preview = false) {
   viewer.setCutaway(true, true);
   cleanup = () => viewer.dispose();
 
-  const cyclic = def.phases.some((p) => p.range);
-
-  // Overlays
+  // ----- Overlays -----
   const idx = READY.findIndex((e) => e.id === def.id);
   const prev = READY[(idx - 1 + READY.length) % READY.length];
   const next = READY[(idx + 1) % READY.length];
@@ -231,79 +232,97 @@ async function renderEngine(id, preview = false) {
         .map((e) => `<option value="${e.id}" ${e.id === def.id ? 'selected' : ''}>${esc(e.short)} — ${esc(e.vehicle)}</option>`)
         .join('')}</optgroup>`
   ).join('');
-  const top = h(`<div class="overlay-top">
-      <div class="title-block">
-        <div class="crumb"><a href="#/">Esplora</a> / <a href="#/?famiglia=${esc(def.family)}">${esc(fam?.name || '')}</a> / ${esc(def.vehicle)}</div>
-        <h1 class="engine-title">${esc(def.name)}</h1>
-        <div class="engine-nav">
-          <a class="icon-btn sm" href="#/motore/${prev.id}" title="Precedente: ${esc(prev.short)}" aria-label="Motore precedente">${ICON.prev}</a>
+  const top = h(`<header class="hud-top">
+      <a class="crumb" href="#/?famiglia=${esc(def.family)}">${ICON.prev}<span>${esc(fam?.name || '')} · ${esc(def.vehicle)}</span></a>
+      <div class="title-row">
+        <label class="title-switch" title="Cambia motore">
+          <h1 class="engine-title">${esc(def.name)}</h1>${ICON.down}
           <select class="engine-switch" aria-label="Cambia motore">${switcher}</select>
-          <a class="icon-btn sm" href="#/motore/${next.id}" title="Successivo: ${esc(next.short)}" aria-label="Motore successivo">${ICON.next}</a>
-        </div>
-        <div class="seg view-toggle" role="group" aria-label="Vista del motore">
-          <span>Vista</span>
-          <button data-view="closed" aria-pressed="false" title="Motore chiuso, come lo vedi dal vero (V)">Chiusa</button>
-          <button data-view="section" aria-pressed="true" title="Sezione: metà involucro tagliata per vedere dentro (V)">Sezione</button>
-        </div>
+        </label>
+        <a class="nav-arrow" href="#/motore/${prev.id}" title="Precedente: ${esc(prev.short)}" aria-label="Motore precedente">${ICON.prev}</a>
+        <a class="nav-arrow" href="#/motore/${next.id}" title="Successivo: ${esc(next.short)}" aria-label="Motore successivo">${ICON.next}</a>
       </div>
-      <div class="phase-caption" hidden></div>
+    </header>`);
+  const readout = h(`<div class="readout"></div>`);
+  const tools = h(`<div class="hud-tools" role="toolbar" aria-label="Vista">
+      <div class="tool-pair">
+        <button class="tool" data-view="closed" aria-pressed="false" title="Il motore chiuso, com’è dal vero (V)">${ICON.closed}<span>Chiusa</span></button>
+        <button class="tool" data-view="section" aria-pressed="true" title="Tagliato a metà per vedere dentro (V)">${ICON.cut}<span>Sezione</span></button>
+      </div>
+      <button class="tool" data-act="explode" aria-pressed="false" title="Separa i pezzi (E)">${ICON.explode}<span>Esploso</span></button>
+      <button class="tool" data-act="labels" aria-pressed="false" title="Mostra i nomi dei pezzi (L)">${ICON.tag}<span>Nomi</span></button>
+      <button class="tool" data-act="reset" title="Rimetti il motore al centro (R)">${ICON.reset}<span>Centra</span></button>
+    </div>`);
+  const bottom = h(`<div class="hud-bottom">
+      <div class="part-card" hidden><button class="x" aria-label="Chiudi">×</button><h4></h4><p></p></div>
+      <div class="caption">
+        <button class="cap-nav" data-s="-1" aria-label="Fase precedente" title="Fase precedente (←)">${ICON.prev}</button>
+        <div class="cap-body"><div class="dots" role="tablist" aria-label="Fasi"></div><b class="cap-name"></b><p class="cap-text"></p></div>
+        <button class="cap-nav" data-s="1" aria-label="Fase successiva" title="Fase successiva (→)">${ICON.next}</button>
+      </div>
+      <div class="ctl-bar">
+        <button class="play" data-act="play" aria-label="Pausa / riprendi" title="Pausa / riprendi (Spazio)">${ICON.pause}</button>
+        <div class="thr">
+          <div class="thr-top"><label for="thr">${esc(def.throttleLabel || 'Acceleratore')}</label><output class="g0"></output></div>
+          <input id="thr" type="range" min="0" max="100" value="35">
+        </div>
+        <button class="info-btn" data-act="info" aria-expanded="false" title="Spiegazioni, dati e quiz (I)">${ICON.info}<span>Scopri di più</span></button>
+      </div>
     </div>`);
   const tooltip = h(`<div class="tooltip" hidden></div>`);
-  const card = h(`<div class="part-card" hidden><button class="x" aria-label="Chiudi">×</button><h4></h4><p></p></div>`);
-  const dock = h(`<div class="dock">
-      <div class="box timeline"></div>
-      <div class="box ctrls">
-        <button class="icon-btn" data-act="prev" title="Fase precedente">${ICON.prev}</button>
-        <button class="icon-btn" data-act="play" title="Pausa / riprendi">${ICON.pause}</button>
-        <button class="icon-btn" data-act="next" title="Fase successiva">${ICON.next}</button>
-      </div>
-      <div class="box throttle">
-        <div class="slider"><label for="thr">${esc(def.throttleLabel || 'Acceleratore')}</label><input id="thr" type="range" min="0" max="100" value="35"></div>
-        <div class="gauges"></div>
-      </div>
-      <div class="box right-ctrls">
-        <div class="slider explode"><label for="exp">Esploso</label><input id="exp" type="range" min="0" max="100" value="0"></div>
-        <button class="icon-btn" data-act="labels" aria-pressed="false" title="Etichette dei pezzi (L)">${ICON.tag}</button>
-        <button class="icon-btn" data-act="reset" title="Ripristina inquadratura (R)">${ICON.reset}</button>
-        <button class="icon-btn help-btn" data-act="help" aria-expanded="false" title="Comandi e scorciatoie (?)">?</button>
-      </div>
-    </div>`);
   const labels = h(`<div class="labels" hidden></div>`);
-  const help = h(`<div class="help-pop" hidden>
-      <h4>Comandi</h4>
-      <ul>
-        <li><b>Trascina</b> ruota · <b>rotella / pizzico</b> zoom · <b>tasto destro</b> sposta</li>
-        <li><kbd>Spazio</kbd> pausa / riprendi</li>
-        <li><kbd>←</kbd> <kbd>→</kbd> fase precedente / successiva</li>
-        <li><kbd>V</kbd> vista chiusa / sezione</li>
-        <li><kbd>E</kbd> esploso sì / no</li>
-        <li><kbd>L</kbd> etichette dei pezzi</li>
-        <li><kbd>R</kbd> ripristina inquadratura</li>
-        <li><kbd>[</kbd> <kbd>]</kbd> motore precedente / successivo</li>
-      </ul>
+  const touch = isTouch();
+  const hints = h(`<div class="hints" hidden>
+      <div>${ICON.reset}<span>${touch ? 'Trascina con un dito' : 'Trascina'} per girarlo</span></div>
+      <div>${ICON.zoom}<span>${touch ? 'Due dita' : 'Rotella'} per lo zoom</span></div>
+      <div>${ICON.tap}<span>${touch ? 'Tocca' : 'Clicca'} un pezzo per sapere cos’è</span></div>
     </div>`);
-  stage.append(labels, top, tooltip, card, dock, help);
+  const TABS = [
+    ['overview', 'Come funziona'],
+    ['phases', 'Fasi'],
+    ['parts', 'Pezzi'],
+    ['quiz', 'Quiz'],
+  ];
+  const sheet = h(`<aside class="sheet" aria-label="Scopri di più">
+      <div class="sheet-head">
+        <div class="tabs" role="tablist">${TABS.map(([k, n]) => `<button role="tab" data-tab="${k}">${n}</button>`).join('')}</div>
+        <button class="x" aria-label="Chiudi">×</button>
+      </div>
+      <div class="panel-body"></div>
+    </aside>`);
+  stage.append(labels, top, readout, tools, tooltip, bottom, hints);
+  page.append(sheet);
   top.querySelector('.engine-switch').addEventListener('change', (e) => (location.hash = `#/motore/${e.target.value}`));
-  // Desktop: the dock overlays the canvas, so keep the model centred above it.
-  const fitInset = () =>
-    viewer.setBottomInset(getComputedStyle(dock).position === 'absolute' ? dock.offsetHeight + 16 : 0);
-  const insetObserver = new ResizeObserver(fitInset);
+
+  // ----- Layout: tools sit on the right on desktop, in the bottom stack on phones -----
+  const caption = bottom.querySelector('.caption');
+  let sheetOpen = false;
+  const fitInsets = () => {
+    const m = isMobile();
+    if (m && tools.parentNode !== bottom) bottom.insertBefore(tools, caption);
+    if (!m && tools.parentNode !== stage) stage.insertBefore(tools, tooltip);
+    const sheetW = !m && sheetOpen ? sheet.offsetWidth : 0;
+    page.style.setProperty('--sheet-w', `${sheetW}px`);
+    viewer.setInsets(
+      m
+        ? { top: top.offsetTop + top.offsetHeight, bottom: bottom.offsetHeight + 8, right: 0 }
+        : { top: top.offsetTop + top.offsetHeight, bottom: bottom.offsetHeight + 8, right: sheetW + tools.offsetWidth + 24 }
+    );
+  };
+  const insetObserver = new ResizeObserver(fitInsets);
   insetObserver.observe(stage);
   let onKey = () => {};
   cleanup = () => (insetObserver.disconnect(), document.removeEventListener('keydown', onKey), viewer.dispose());
 
-  // Timeline
-  const timeline = dock.querySelector('.timeline');
+  // ----- Phases: dots + caption -----
+  const dots = bottom.querySelector('.dots');
   def.phases.forEach((p, i) => {
-    const b = h(`<button title="${esc(p.name)}">${i + 1}. ${esc(p.name)}</button>`);
-    b.addEventListener('click', () => viewer.goToPhase(i));
-    timeline.appendChild(b);
+    const b = h(`<button role="tab" title="${esc(p.name)}" aria-label="Fase ${i + 1}: ${esc(p.name)}"></button>`);
+    b.addEventListener('click', () => (viewer.goToPhase(i), syncPlay(), renderCaption()));
+    dots.appendChild(b);
   });
-  const needle = cyclic ? timeline.appendChild(h('<i class="needle"></i>')) : null;
-
-  // Controls
-  const playBtn = dock.querySelector('[data-act="play"]');
-  const syncPlay = () => (playBtn.innerHTML = viewer.state.paused ? ICON.play : ICON.pause);
+  const playBtn = bottom.querySelector('[data-act="play"]');
+  const syncPlay = () => (playBtn.innerHTML = viewer.state.paused || viewer.stepMode ? ICON.play : ICON.pause);
   playBtn.addEventListener('click', () => {
     if (viewer.stepMode) viewer.exitStepMode();
     else viewer.togglePaused();
@@ -314,24 +333,55 @@ async function renderEngine(id, preview = false) {
     const base = viewer.phaseIndex < 0 ? (d > 0 ? -1 : 0) : viewer.phaseIndex;
     viewer.goToPhase(base + d);
     syncPlay();
+    renderCaption();
   };
-  dock.querySelector('[data-act="prev"]').addEventListener('click', () => step(-1));
-  dock.querySelector('[data-act="next"]').addEventListener('click', () => step(1));
-  const thr = dock.querySelector('#thr');
+  bottom.querySelectorAll('.cap-nav').forEach((b) => b.addEventListener('click', () => step(+b.dataset.s)));
+
+  const capName = bottom.querySelector('.cap-name');
+  const capText = bottom.querySelector('.cap-text');
+  function renderCaption() {
+    const i = viewer.phaseIndex;
+    const p = def.phases[i];
+    [...dots.children].forEach((b, k) => (b.classList.toggle('on', k === i), b.setAttribute('aria-selected', k === i)));
+    const still = viewer.stepMode || viewer.state.paused;
+    caption.classList.toggle('reading', !!(still && p));
+    if (!p) {
+      capName.textContent = def.short;
+      capText.innerHTML = 'Premi <b>›</b> per seguirlo una fase alla volta.';
+      return;
+    }
+    capName.textContent = `${i + 1}. ${p.name}`;
+    capText.innerHTML = still ? txt(p) : esc(firstSentence(txt(p)));
+  }
+  viewer.on('phase', () => {
+    renderCaption();
+    if (activeTab === 'phases') renderPanel();
+  });
+
+  // ----- Throttle -----
+  const thr = bottom.querySelector('#thr');
   thr.addEventListener('input', () => viewer.setThrottle(thr.value / 100));
   viewer.setThrottle(thr.value / 100);
-  const exp = dock.querySelector('#exp');
-  exp.addEventListener('input', () => viewer.setExplode(exp.value / 100));
-  const viewBtns = [...top.querySelectorAll('[data-view]')];
+
+  // ----- View tools -----
+  const viewBtns = [...tools.querySelectorAll('[data-view]')];
   const setView = (section) => {
     viewer.setCutaway(section);
     viewBtns.forEach((b) => b.setAttribute('aria-pressed', (b.dataset.view === 'section') === section));
   };
   viewBtns.forEach((b) => b.addEventListener('click', () => setView(b.dataset.view === 'section')));
-  dock.querySelector('[data-act="reset"]').addEventListener('click', () => viewer.resetCamera());
+  const expBtn = tools.querySelector('[data-act="explode"]');
+  let exploded = false;
+  const setExploded = (on) => {
+    exploded = on;
+    viewer.setExplode(on ? 1 : 0);
+    expBtn.setAttribute('aria-pressed', on);
+  };
+  expBtn.addEventListener('click', () => setExploded(!exploded));
+  tools.querySelector('[data-act="reset"]').addEventListener('click', () => viewer.resetCamera());
 
   // Part labels anchored in 3D
-  const labelBtn = dock.querySelector('[data-act="labels"]');
+  const labelBtn = tools.querySelector('[data-act="labels"]');
   let labelEls = [];
   const buildLabels = () => {
     labels.innerHTML = '';
@@ -350,13 +400,39 @@ async function renderEngine(id, preview = false) {
   labelBtn.addEventListener('click', () => setLabels(labels.hidden));
   viewer.on('option', () => !labels.hidden && buildLabels());
 
-  const helpBtn = dock.querySelector('[data-act="help"]');
-  const toggleHelp = (force) => {
-    const show = force ?? help.hidden;
-    help.hidden = !show;
-    helpBtn.setAttribute('aria-expanded', show);
+  // ----- "Scopri di più" sheet -----
+  const infoBtn = bottom.querySelector('[data-act="info"]');
+  const setSheet = (open) => {
+    sheetOpen = open;
+    page.classList.toggle('sheet-open', open);
+    infoBtn.setAttribute('aria-expanded', open);
+    try {
+      localStorage.setItem('motorilab-sheet', open ? '1' : '0');
+    } catch {}
+    fitInsets();
   };
-  helpBtn.addEventListener('click', () => toggleHelp());
+  infoBtn.addEventListener('click', () => setSheet(!sheetOpen));
+  sheet.querySelector('.x').addEventListener('click', () => setSheet(false));
+
+  // ----- First visit: three quick hints instead of written instructions -----
+  let hintsSeen = false;
+  try {
+    hintsSeen = localStorage.getItem('motorilab-hints') === '1';
+  } catch {}
+  if (!hintsSeen) {
+    hints.hidden = false;
+    const done = () => {
+      hints.classList.add('out');
+      setTimeout(() => (hints.hidden = true), 400);
+      clearTimeout(timer);
+      stage.removeEventListener('pointerdown', done, true);
+      try {
+        localStorage.setItem('motorilab-hints', '1');
+      } catch {}
+    };
+    const timer = setTimeout(done, 7000);
+    stage.addEventListener('pointerdown', done, true);
+  }
 
   onKey = (e) => {
     if (e.target.closest('input, select, textarea') || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -365,13 +441,11 @@ async function renderEngine(id, preview = false) {
     else if (k === 'arrowright') step(1);
     else if (k === 'arrowleft') step(-1);
     else if (k === 'v' || k === 's') setView(!viewer.cutaway);
-    else if (k === 'e') {
-      exp.value = +exp.value > 50 ? 0 : 100;
-      viewer.setExplode(exp.value / 100);
-    } else if (k === 'l') setLabels(labels.hidden);
+    else if (k === 'e') setExploded(!exploded);
+    else if (k === 'l') setLabels(labels.hidden);
     else if (k === 'r') viewer.resetCamera();
-    else if (k === '?' || k === 'h') toggleHelp();
-    else if (k === 'escape') (toggleHelp(false), viewer.selectPart(null));
+    else if (k === 'i' || k === '?') setSheet(!sheetOpen);
+    else if (k === 'escape') sheetOpen ? setSheet(false) : viewer.selectPart(null);
     else if (k === '[') location.hash = `#/motore/${prev.id}`;
     else if (k === ']') location.hash = `#/motore/${next.id}`;
     else return;
@@ -379,44 +453,46 @@ async function renderEngine(id, preview = false) {
   };
   document.addEventListener('keydown', onKey);
 
-  // Gauges, throttled DOM updates
-  const gauges = dock.querySelector('.gauges');
+  // ----- Per-frame: labels, readouts -----
+  const g0 = bottom.querySelector('.g0');
   let lastG = 0;
   viewer.on('frame', (s) => {
-    const now = performance.now();
-    if (needle) needle.style.left = `calc(${(s.cycle % 1) * 100}% )`;
     if (!labels.hidden) {
+      const cv = viewer.renderer.domElement;
       for (const { p, el } of labelEls) {
         const q = viewer.projectPart(p);
-        const cv = viewer.renderer.domElement;
         const off = q.behind || q.x < cv.offsetLeft || q.y < cv.offsetTop || q.x > cv.offsetLeft + cv.clientWidth || q.y > cv.offsetTop + cv.clientHeight;
         el.style.display = off ? 'none' : '';
         if (!off) el.style.transform = `translate(${q.x}px, ${q.y}px) translate(-50%, -50%)`;
         el.classList.toggle('on', p === viewer.selected);
       }
     }
-    if (now - lastG < 120) return;
+    const now = performance.now();
+    if (now - lastG < 150) return;
     lastG = now;
-    gauges.innerHTML = viewer.engine
-      .readout(s)
-      .map((g) => `<div class="gauge"><small>${esc(g.label)}</small><b>${fmt(g.value)}<i>${esc(g.unit || '')}</i></b></div>`)
+    const gs = viewer.engine.readout(s);
+    g0.textContent = gs[0] ? `${fmt(gs[0].value)} ${gs[0].unit || ''}` : '';
+    readout.innerHTML = gs
+      .slice(1)
+      .map((g) => `<div><small>${esc(g.label)}</small><b>${fmt(g.value)}<i>${esc(g.unit || '')}</i></b></div>`)
       .join('');
   });
 
-  // Hover tooltip
-  let mouse = { x: 0, y: 0 };
-  stage.addEventListener('pointermove', (e) => {
-    const r = stage.getBoundingClientRect();
-    mouse = { x: e.clientX - r.left, y: e.clientY - r.top };
-    tooltip.style.left = mouse.x + 'px';
-    tooltip.style.top = mouse.y + 'px';
-  });
-  viewer.on('hover', (p) => {
-    tooltip.hidden = !p;
-    if (p) tooltip.textContent = p.name;
-  });
+  // Hover tooltip (mouse only)
+  if (!touch) {
+    stage.addEventListener('pointermove', (e) => {
+      const r = stage.getBoundingClientRect();
+      tooltip.style.left = e.clientX - r.left + 'px';
+      tooltip.style.top = e.clientY - r.top + 'px';
+    });
+    viewer.on('hover', (p) => {
+      tooltip.hidden = !p;
+      if (p) tooltip.textContent = p.name;
+    });
+  }
 
-  // Selection card
+  // Selected part card
+  const card = bottom.querySelector('.part-card');
   const renderCard = () => {
     const p = viewer.selected;
     card.hidden = !p;
@@ -430,50 +506,27 @@ async function renderEngine(id, preview = false) {
     if (activeTab === 'parts') renderPanel();
   });
 
-  // Phase caption
-  const caption = top.querySelector('.phase-caption');
-  function renderCaption() {
-    const i = viewer.phaseIndex;
-    const p = def.phases[i];
-    [...timeline.querySelectorAll('button')].forEach((b, k) => b.classList.toggle('on', k === i));
-    caption.hidden = !p;
-    if (!p) return;
-    const showText = viewer.stepMode || viewer.state.paused;
-    caption.innerHTML = `<div class="k">Fase ${i + 1} di ${def.phases.length}${cyclic ? ' · cilindro 1' : ''}</div><h4>${esc(p.name)}</h4>${
-      showText ? `<p>${txt(p)}</p>` : ''
-    }`;
-  }
-  viewer.on('phase', () => {
-    renderCaption();
-    if (activeTab === 'phases') renderPanel();
-  });
-
-  // Side panel
+  // ----- Sheet content -----
   let activeTab = 'overview';
-  const TABS = [
-    ['overview', 'Panoramica'],
-    ['phases', 'Fasi'],
-    ['parts', 'Componenti'],
-    ['quiz', 'Quiz'],
-  ];
-  panel.innerHTML = `<div class="tabs" role="tablist">${TABS.map(
-    ([k, n]) => `<button role="tab" data-tab="${k}" aria-selected="${k === activeTab}">${n}</button>`
-  ).join('')}</div><div class="panel-body"></div>`;
-  const body = panel.querySelector('.panel-body');
-  panel.querySelectorAll('[data-tab]').forEach((b) =>
+  const body = sheet.querySelector('.panel-body');
+  const tabBtns = [...sheet.querySelectorAll('[data-tab]')];
+  const syncTabs = () => tabBtns.forEach((x) => x.setAttribute('aria-selected', x.dataset.tab === activeTab));
+  tabBtns.forEach((b) =>
     b.addEventListener('click', () => {
       activeTab = b.dataset.tab;
-      panel.querySelectorAll('[data-tab]').forEach((x) => x.setAttribute('aria-selected', x === b));
+      syncTabs();
       renderPanel();
+      body.scrollTop = 0;
     })
   );
+  syncTabs();
   const quizState = { i: 0, score: 0, answered: null };
 
   function renderPanel() {
     if (activeTab === 'overview') {
       body.innerHTML = `
         <p class="tagline">${esc(def.tagline)}</p>
-        <h3>Come funziona</h3><p>${txt(def.intro)}</p>
+        <p>${txt(def.intro)}</p>
         ${(def.options || [])
           .map((o) => {
             const cur = o.choices.find((c) => c.id === viewer.options[o.id]) || o.choices[0];
@@ -492,12 +545,13 @@ async function renderEngine(id, preview = false) {
                 .map((c) => `<th>${esc(c)}</th>`)
                 .join('')}</tr></thead><tbody>${def.variants.rows
                 .map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`)
-                .join('')}</tbody></table></div>${def.variants.note ? `<p class="examples">${esc(def.variants.note)}</p>` : ''}`
+                .join('')}</tbody></table></div>${def.variants.note ? `<p class="note">${esc(def.variants.note)}</p>` : ''}`
             : ''
         }
-        <h3>Dove lo trovi</h3><p class="examples">${esc(def.examples || def.vehicle)}</p>
-        <h3>Prova tu</h3>
-        <p class="examples">Passa da vista <b>Chiusa</b> a <b>Sezione</b>, muovi il cursore <b>${esc(def.throttleLabel || 'Acceleratore')}</b>, apri l’<b>esploso</b> e tocca i pezzi. Con ◀ ▶ segui le fasi una alla volta; premi <kbd>?</kbd> per tutte le scorciatoie.</p>`;
+        <h3>Dove lo trovi</h3><p class="note">${esc(def.examples || def.vehicle)}</p>
+        <div class="kbd-help"><h3>Da tastiera</h3><p class="note">
+          <kbd>Spazio</kbd> pausa · <kbd>←</kbd><kbd>→</kbd> fasi · <kbd>V</kbd> chiusa/sezione · <kbd>E</kbd> esploso ·
+          <kbd>L</kbd> nomi · <kbd>R</kbd> centra · <kbd>I</kbd> questo pannello · <kbd>[</kbd><kbd>]</kbd> altro motore</p></div>`;
       body.querySelectorAll('[data-opt]').forEach((b) =>
         b.addEventListener('click', () => {
           viewer.setOption(b.dataset.opt, b.dataset.val);
@@ -505,32 +559,16 @@ async function renderEngine(id, preview = false) {
         })
       );
     } else if (activeTab === 'phases') {
-      body.innerHTML = `<div class="step-nav">
-          <button class="btn" data-s="-1">◀ Precedente</button>
-          <button class="btn" data-s="0">${viewer.stepMode ? 'Riprendi animazione' : 'Passo-passo'}</button>
-          <button class="btn" data-s="1">Successiva ▶</button>
-        </div>
-        <ol class="phase-list">${def.phases
-          .map(
-            (p, i) => `<li class="${i === viewer.phaseIndex ? 'on' : ''}"><button data-i="${i}"><span class="n">${String(i + 1).padStart(2, '0')}</span><b>${esc(
-              p.name
-            )}</b></button><div class="txt">${txt(p)}</div></li>`
-          )
-          .join('')}</ol>`;
-      body.querySelectorAll('[data-i]').forEach((b) => b.addEventListener('click', () => (viewer.goToPhase(+b.dataset.i), syncPlay())));
-      body.querySelectorAll('[data-s]').forEach((b) =>
-        b.addEventListener('click', () => {
-          const s = +b.dataset.s;
-          if (s === 0) {
-            viewer.stepMode ? viewer.exitStepMode() : viewer.goToPhase(Math.max(0, viewer.phaseIndex));
-            syncPlay();
-            renderCaption();
-            renderPanel();
-          } else step(s);
-        })
-      );
+      body.innerHTML = `<ol class="phase-list">${def.phases
+        .map(
+          (p, i) => `<li class="${i === viewer.phaseIndex ? 'on' : ''}"><button data-i="${i}"><span class="n">${i + 1}</span><b>${esc(
+            p.name
+          )}</b></button><div class="txt">${txt(p)}</div></li>`
+        )
+        .join('')}</ol>`;
+      body.querySelectorAll('[data-i]').forEach((b) => b.addEventListener('click', () => (viewer.goToPhase(+b.dataset.i), syncPlay(), renderCaption())));
     } else if (activeTab === 'parts') {
-      body.innerHTML = `<p class="examples">Tocca un componente nella lista o direttamente nel modello 3D.</p>
+      body.innerHTML = `<p class="note">Tocca un pezzo qui o direttamente sul modello.</p>
         <ul class="part-list">${viewer.visibleParts
           .map(
             (p) => `<li class="${p === viewer.selected ? 'on' : ''}"><button data-id="${esc(p.id)}"><b>${esc(p.name)}</b></button><div class="txt">${txt(p)}</div></li>`
@@ -545,6 +583,12 @@ async function renderEngine(id, preview = false) {
   }
   renderPanel();
   renderCaption();
+  let wantSheet = false;
+  try {
+    wantSheet = localStorage.getItem('motorilab-sheet') === '1' && !isMobile();
+  } catch {}
+  if (wantSheet) setSheet(true);
+  else fitInsets();
   levelListeners.add(() => {
     renderPanel();
     renderCaption();

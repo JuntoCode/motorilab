@@ -245,10 +245,16 @@ export class EngineViewer {
     return this.state.paused;
   }
 
-  setBottomInset(px) {
-    if (px === this.bottomInset) return;
-    this.bottomInset = px;
+  // Space covered by overlaid UI (px). The model is centred and fitted in the free area.
+  setInsets({ top = 0, bottom = 0, right = 0 } = {}) {
+    const i = this.insets || {};
+    if (i.top === top && i.bottom === bottom && i.right === right) return;
+    this.insets = { top, bottom, right };
     this.resize();
+    if (this.def && !this.userMoved) this.resetCamera();
+  }
+  setBottomInset(px) {
+    this.setInsets({ ...this.insets, bottom: px });
   }
 
   resetCamera(instant = false) {
@@ -256,7 +262,14 @@ export class EngineViewer {
     const look = new THREE.Vector3(...cam.target);
     // Keep the explode dolly factor so un-exploding later lands on the default framing.
     // Narrow (portrait) canvases need the camera further back to fit wide models.
-    const fit = Math.pow(Math.max(1, 1.3 / (this.camera.aspect || 1.3)), 0.9);
+    // Overlaid UI shrinks the free area: fit the model to that area, not the whole canvas.
+    const el = this.renderer.domElement;
+    const W = el.clientWidth || 1;
+    const H = el.clientHeight || 1;
+    const { top = 0, bottom = 0, right = 0 } = this.insets || {};
+    const freeW = Math.max(W * 0.4, W - right);
+    const freeH = Math.max(H * 0.4, H - top - bottom);
+    const fit = Math.pow(Math.max(1, 1.3 / (freeW / freeH)), 0.9) * Math.pow(H / freeH, 0.4);
     const pos = new THREE.Vector3(...cam.position).sub(look).multiplyScalar((1 + 0.5 * this.explode) * fit).add(look);
     this.camTarget = { pos, look };
     if (instant) {
@@ -395,8 +408,9 @@ export class EngineViewer {
     const h = el.clientHeight;
     if (!w || !h) return;
     this.renderer.setSize(w, h, false);
-    // Shift the view up so the model is centred in the space above overlaid controls.
-    if (this.bottomInset) this.camera.setViewOffset(w, h, 0, this.bottomInset / 2, w, h);
+    // Shift the view so the model is centred in the space left free by overlaid controls.
+    const { top = 0, bottom = 0, right = 0 } = this.insets || {};
+    if (top || bottom || right) this.camera.setViewOffset(w, h, right / 2, (bottom - top) / 2, w, h);
     else this.camera.clearViewOffset();
     const prevAspect = this.camera.aspect;
     this.camera.aspect = w / h;
