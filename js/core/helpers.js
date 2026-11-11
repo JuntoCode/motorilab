@@ -6,19 +6,66 @@ import * as THREE from 'three';
 const std = (color, metalness, roughness, extra = {}) =>
   new THREE.MeshStandardMaterial({ color, metalness, roughness, ...extra });
 
+// Procedural surface grain (no UVs needed): a 3D noise in object space roughens the highlights and bumps
+// the normal a little, so castings look cast and paint looks sprayed instead of perfectly smooth CAD.
+// scale = grains per unit, bump = grain height in scene units, rough = roughness variation.
+export function grain(material, scale = 40, bump = 0.001, rough = 0.2) {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uGrain = { value: new THREE.Vector3(scale, bump, rough) };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vGrainPos;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGrainPos = position;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+        varying vec3 vGrainPos;
+        uniform vec3 uGrain;
+        float gHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+        float gNoise(vec3 x) {
+          vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(mix(gHash(i), gHash(i + vec3(1, 0, 0)), f.x), mix(gHash(i + vec3(0, 1, 0)), gHash(i + vec3(1, 1, 0)), f.x), f.y),
+                     mix(mix(gHash(i + vec3(0, 0, 1)), gHash(i + vec3(1, 0, 1)), f.x), mix(gHash(i + vec3(0, 1, 1)), gHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+        }`
+      )
+      .replace(
+        '#include <roughnessmap_fragment>',
+        `#include <roughnessmap_fragment>
+        float gH = gNoise(vGrainPos * uGrain.x) * 0.65 + gNoise(vGrainPos * uGrain.x * 2.3) * 0.35;
+        float gBlotch = gNoise(vGrainPos * uGrain.x * 0.12 + 7.0);
+        roughnessFactor = clamp(roughnessFactor + ((gH - 0.5) * 0.5 + (gBlotch - 0.5)) * uGrain.z, 0.05, 1.0);`
+      )
+      .replace(
+        '#include <normal_fragment_maps>',
+        `#include <normal_fragment_maps>
+        {
+          // Fade the bump out when a grain gets smaller than a couple of pixels, so it never turns into pixel noise.
+          float gFade = clamp(1.3 - 2.6 * length(fwidth(vGrainPos * uGrain.x)), 0.0, 1.0);
+          vec2 gD = vec2(dFdx(gH), dFdy(gH)) * uGrain.y * gFade;
+          vec3 gSx = dFdx(-vViewPosition); vec3 gSy = dFdy(-vViewPosition);
+          vec3 gR1 = cross(gSy, normal); vec3 gR2 = cross(normal, gSx);
+          float gDet = dot(gSx, gR1) * faceDirection;
+          normal = normalize(abs(gDet) * normal - sign(gDet) * (gD.x * gR1 + gD.y * gR2));
+        }`
+      );
+  };
+  material.customProgramCacheKey = () => 'grain';
+  return material;
+}
+
 export const MAT = {
   steel: () => std(0xb9c0c8, 0.9, 0.3),
-  darkSteel: () => std(0x5d636b, 0.85, 0.4),
-  aluminum: () => std(0xd5d9de, 0.75, 0.42),
-  castIron: () => std(0x4a4f56, 0.55, 0.75),
+  darkSteel: () => grain(std(0x5d636b, 0.85, 0.4), 70, 0.0004, 0.14),
+  aluminum: () => grain(std(0xd5d9de, 0.75, 0.42), 55, 0.0007, 0.2),
+  castIron: () => grain(std(0x4a4f56, 0.55, 0.75), 42, 0.002, 0.22),
   titanium: () => std(0x9a9a92, 0.85, 0.35),
   copper: () => std(0xc8733a, 1.0, 0.33),
   brass: () => std(0xc9a34a, 1.0, 0.3),
   chrome: () => std(0xeef2f6, 1.0, 0.12),
   ceramic: () => std(0xf1efe8, 0.0, 0.55),
-  rubber: () => std(0x1d1f22, 0.0, 0.9),
+  rubber: () => grain(std(0x1d1f22, 0.0, 0.9), 90, 0.001, 0.1),
   carbon: () => std(0x222428, 0.4, 0.5),
-  paint: (color, roughness = 0.45) => std(color, 0.25, roughness),
+  paint: (color, roughness = 0.45) => grain(std(color, 0.25, roughness), 60, 0.0004, 0.1),
   // Self-lit material for flames, sparks, hot zones.
   glow: (color, intensity = 2, opacity = 1) =>
     new THREE.MeshStandardMaterial({

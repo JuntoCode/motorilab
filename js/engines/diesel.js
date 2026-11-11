@@ -4,6 +4,7 @@
 // selectable timing drive (dry belt, wet belt, chain).
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MAT, cut, lathe, pipe, flow, ringX, clamp, lerp, smooth } from '../core/helpers.js';
 
 const BORE_X = [-1.2, -0.4, 0.4, 1.2];
@@ -25,6 +26,7 @@ const CX = -2.54; // compressor wheel
 const TX = -3.04; // turbine wheel
 const PUMP = [-1.92, 0.95, -0.6]; // high-pressure pump drive centre (on the timing drive)
 const DPF_X = -3.0;
+const TIMING = ['dryBelt', 'wetBelt', 'chain']; // timing drive variants (option 'timing')
 
 // ---------- engine kit: shared layout + geometry helpers (same code in diesel.js) ----------
 const TAU = Math.PI * 2;
@@ -135,6 +137,9 @@ function extX(shape, x0, x1, seg = 24) {
 
 // Rows of hex bolt heads as one InstancedMesh (axis: 'x' | 'y' | 'z').
 const HEX = new THREE.CylinderGeometry(0.024, 0.024, 0.02, 6);
+// Hex head + threaded shank of length `len` below it (local -Y), so a bolt backing out shows its shank.
+const screw = (len, r = 0.024, h = 0.02) =>
+  mergeGeometries([new THREE.CylinderGeometry(r, r, h, 6), new THREE.CylinderGeometry(r * 0.62, r * 0.62, len, 8).translate(0, -h / 2 - len / 2, 0)]);
 function bolts(mat, pts, axis = 'y', geo = HEX) {
   const m = new THREE.InstancedMesh(geo, mat, pts.length);
   const q = new THREE.Quaternion();
@@ -623,6 +628,118 @@ export default {
         'I gas di scarico, ancora caldi e in pressione, fanno girare la turbina; sullo stesso albero c’è il compressore che spinge più aria nei cilindri. Energia recuperata invece che persa.',
     },
   ],
+  // Officina (see CONTRACT.md): how each part comes off and what holds it; the guide suggests an order.
+  // Simplified and educational, not a workshop manual.
+  disassembly: {
+    intro: 'Smontiamo il diesel dall’esterno verso l’interno: aria, scarico e turbo, impianto del gasolio, distribuzione e infine la testata, fino a vedere i pistoni con la loro tazza.',
+    note: 'Sequenza semplificata a scopo didattico: in officina si segue il manuale del costruttore, con i suoi attrezzi e le sue coppie di serraggio.',
+    parts: {
+      airFilter: { dir: [-0.3, 0.6, -0.7], dist: 0.9 },
+      intercooler: { dir: [-0.4, -0.1, -0.9], dist: 1.0 },
+      dpf: { dir: [-1, -0.2, 0], dist: 0.9 },
+      turbocharger: { after: ['dpf', 'airFilter', 'intercooler'], with: ['turboRotor'], dir: [-1, 0, 0], dist: 1.0 },
+      exhaustNuts: { motion: 'unscrew', turns: 6, out: 0.08, dir: [0, 0, 1], dist: 0.4 },
+      exhaustManifold: { after: ['exhaustNuts', 'turbocharger'], dir: [0, 0, 1], dist: 1.0 },
+      commonRail: { dir: [0, 1, -0.3], dist: 0.9 },
+      injectors: { after: ['commonRail'], dir: [0, 1, 0], dist: 1.1 },
+      intakeManifold: { after: ['intercooler'], dir: [0, 0.1, -1], dist: 1.0 },
+      glowPlugs: { after: ['intakeManifold'], motion: 'unscrew', turns: 6, out: 0.12, dir: [0, 0.72, -0.69], dist: 0.6 },
+      camCoverBolts: { motion: 'unscrew', turns: 6, out: 0.1 },
+      camCover: { after: ['camCoverBolts', 'injectors', 'commonRail'], dir: [0, 1, 0], dist: 0.8 },
+      accessoryDrive: { after: ['turbocharger', 'dpf'], dir: [-1, 0, 0.4], dist: 0.9 },
+      ...Object.fromEntries(
+        TIMING.flatMap((k) => [
+          [`timingCover_${k}`, { after: ['accessoryDrive'], dir: [-1, 0, 0], dist: 0.9 }],
+          [`timing_${k}`, { after: [`timingCover_${k}`], dir: [-1, 0, 0], dist: 1.0 }],
+        ])
+      ),
+      camshafts: { after: ['camCover', ...TIMING.map((k) => `timing_${k}`)], dir: [0, 1, 0], dist: 0.7 },
+      intakeValves: { after: ['camshafts'], dir: [0, 1, 0], dist: 0.8 },
+      exhaustValves: { after: ['camshafts'], dir: [0, 1, 0], dist: 0.8 },
+      headBolts: { after: ['camCover'], motion: 'unscrew', turns: 8, out: 0.3, dist: 0.5, duration: 2.2 },
+      cylinderHead: {
+        after: ['headBolts', 'intakeManifold', 'exhaustManifold', ...TIMING.map((k) => `timing_${k}`)],
+        with: ['intakeValves', 'exhaustValves', 'camshafts', 'glowPlugs'],
+        dir: [0, 1, 0],
+        dist: 1.0,
+        duration: 1.2,
+      },
+      gaskets: { after: ['cylinderHead'], dir: [0, 1, 0], dist: 0.6 },
+      block: { after: ['gaskets'] },
+    },
+    steps: [
+      {
+        id: 'air',
+        name: 'Stacca filtro e intercooler',
+        base: 'Si allentano le fascette e si tolgono la scatola del filtro dell’aria e l’intercooler con i suoi tubi: così il turbo resta libero.',
+        expert: 'Manicotti e tubi della sovralimentazione sono tenuti da fascette o innesti rapidi. È buona norma tappare subito le bocche del turbo: un corpo estraneo aspirato dal compressore, che gira a oltre 100 000 giri/min, ne rovina le pale.',
+        parts: ['airFilter', 'intercooler'],
+      },
+      {
+        id: 'turbo',
+        name: 'Togli DPF e turbo',
+        base: 'Si stacca il tubo di scarico con il filtro antiparticolato, poi il turbocompressore con la sua girante: è fissato all’uscita del collettore di scarico.',
+        expert: 'Prima si scollegano i tubicini del sensore di pressione differenziale e le sonde del DPF, poi le tubazioni di mandata e ritorno dell’olio del turbo: i suoi cuscinetti flottanti vivono dell’olio motore in pressione.',
+        parts: ['dpf', 'turbocharger'],
+      },
+      {
+        id: 'exhaust',
+        name: 'Svita il collettore di scarico',
+        base: 'Con la chiave si svitano i dadi che stringono il collettore alla testata, poi lo si sfila dai prigionieri.',
+        expert: 'I dadi lavorano a centinaia di gradi e possono bloccarsi sui prigionieri: si allentano con cautela, per non spezzarli. La guarnizione metallica tra collettore e testata di norma si sostituisce.',
+        parts: ['exhaustNuts', 'exhaustManifold'],
+      },
+      {
+        id: 'fuel',
+        name: 'Stacca rail e iniettori',
+        base: 'Si toglie il rail con i tubi d’acciaio dell’alta pressione, poi si sfilano gli iniettori dai loro pozzetti insieme al cablaggio.',
+        expert: 'Si lavora solo a motore fermo, quando la pressione nel rail si è scaricata. Le aperture dell’impianto vanno tappate subito: basta un granello di sporco a rovinare un iniettore. Ogni iniettore torna nel suo cilindro, perché la centralina ne conosce il codice di taratura.',
+        parts: ['commonRail', 'injectors'],
+      },
+      {
+        id: 'intake',
+        name: 'Togli collettore e candelette',
+        base: 'Si sfila il collettore di aspirazione dal fianco della testata; ora le candelette sono a portata di chiave e si svitano una per una.',
+        expert: 'Con il collettore si stacca anche il condotto dell’EGR, di solito incrostato da un impasto di fuliggine e vapori d’olio. Le candelette hanno stelo lungo e filetto sottile: con gli anni i depositi carboniosi possono bloccarle nella testata, quindi si svitano con delicatezza.',
+        parts: ['intakeManifold', 'glowPlugs'],
+      },
+      {
+        id: 'cover',
+        name: 'Togli il coperchio punterie',
+        base: 'Si svitano le viti e si solleva il coperchio con la sua guarnizione: sotto compaiono i due alberi a camme.',
+        expert: 'Le viti si allentano un po’ alla volta. La guarnizione in elastomero resta nella sua sede sul bordo del coperchio e va controllata o sostituita; nel coperchio c’è spesso anche il separatore dei vapori d’olio.',
+        parts: ['camCoverBolts', 'camCover'],
+      },
+      {
+        id: 'aux',
+        name: 'Togli la cinghia servizi',
+        base: 'Si allenta il tendicinghia e si toglie la cinghia esterna con l’alternatore e la puleggia: coprono il carter della distribuzione.',
+        expert: 'Il tendicinghia automatico si ruota con una chiave per liberare la cinghia Poly-V; poi si smonta la puleggia smorzatrice sull’albero motore.',
+        parts: ['accessoryDrive'],
+      },
+      {
+        id: 'timing',
+        name: 'Togli carter e distribuzione',
+        base: 'Si toglie il carter laterale, poi si bloccano gli alberi nella posizione giusta e si sfila la catena (o la cinghia) con le sue ruote dentate.',
+        expert: 'Con gli attrezzi di fasatura si bloccano albero motore e alberi a camme: al rimontaggio la fase deve tornare identica, perché nel diesel lo spazio tra valvole e pistone al punto morto superiore è minimo.',
+        parts: [...TIMING.map((k) => `timingCover_${k}`), ...TIMING.map((k) => `timing_${k}`)],
+      },
+      {
+        id: 'head',
+        name: 'Solleva la testata',
+        base: 'Si svitano le lunghe viti della testata e la si solleva tutta intera, con valvole e alberi a camme ancora al loro posto.',
+        expert: 'Le viti si allentano poco per volta nell’ordine inverso a quello di serraggio, dall’esterno verso il centro, per non deformare la testata. In questo modello semplificato la testata esce completa di alberi a camme e valvole; in molti motori reali gli alberi a camme vanno tolti prima, perché coprono le viti.',
+        parts: ['headBolts', 'cylinderHead'],
+      },
+      {
+        id: 'gasket',
+        name: 'Togli la guarnizione',
+        base: 'Tolta la guarnizione della testata si vedono dall’alto i pistoni, ognuno con la sua tazza scavata: la camera di combustione del diesel.',
+        expert: 'La guarnizione multistrato in acciaio non si riusa. Nel diesel se ne sceglie lo spessore misurando di quanto i pistoni sporgono dal piano del basamento: da quel valore dipende il rapporto di compressione.',
+        parts: ['gaskets'],
+      },
+    ],
+  },
   camera: { position: [-5.4, 3.0, 6.9], target: [0, 0.95, -0.1] },
 
   build(ctx) {
@@ -783,15 +900,12 @@ export default {
     const headGasket = rrShape(-BX, -BZ, BX, BZ, 0.1);
     BORE_X.forEach((x) => headGasket.holes.push(circleHole(x, 0, 0.352)));
     gaskets.add(new THREE.Mesh(extY(headGasket, HEAD_Y - 0.006, HEAD_Y + 0.006, 32), gasketMat));
-    const coverGasket = rrShape(-1.7, -0.42, 1.7, 0.42, 0.06);
-    coverGasket.holes.push(rrHole(-1.64, -0.36, 1.64, 0.36, 0.04));
-    gaskets.add(new THREE.Mesh(extY(coverGasket, HEAD_TOP - 0.006, HEAD_TOP + 0.006, 8), gasketMat));
     root.add(
       ctx.part(gaskets, {
         id: 'gaskets',
-        name: 'Guarnizioni',
-        base: 'Strati sottili tra un pezzo e l’altro che impediscono a gas, olio e acqua di uscire. Quella della testata nel diesel lavora sotto pressioni enormi.',
-        expert: 'Guarnizione di testata multistrato in acciaio (MLS) con spessore scelto in base alla sporgenza dei pistoni, per ottenere il rapporto di compressione esatto; guarnizione del coperchio in elastomero.',
+        name: 'Guarnizione della testata',
+        base: 'Uno strato sottile tra testata e basamento che impedisce a gas, olio e acqua di uscire. Nel diesel lavora sotto pressioni enormi.',
+        expert: 'Guarnizione multistrato in acciaio (MLS) con spessore scelto in base alla sporgenza dei pistoni, per ottenere il rapporto di compressione esatto.',
         explode: [0, 0.5, 0.2],
       })
     );
@@ -817,8 +931,15 @@ export default {
     for (const x of CAP_X) head.add(new THREE.Mesh(extX(capShape, x - 0.045, x + 0.045, 16), headMat));
     const capBolts = [];
     for (const x of CAP_X) for (const z of [-0.26, 0, 0.26]) capBolts.push([x, 2.26, z]);
-    for (const c of BORE_X) for (const dx of [-0.3, 0.3]) for (const z of [-0.33, 0.33]) capBolts.push([c + dx, GAL_Y + 0.012, z]);
     head.add(bolts(boltMat, capBolts, 'y', new THREE.CylinderGeometry(0.03, 0.03, 0.025, 6)));
+    // head bolts sit on raised bosses beside the cams, so they can be reached with the camshafts in place
+    const HB_Y = 1.95;
+    const headBolts = [];
+    for (const c of BORE_X) for (const dx of [-0.3, 0.3]) for (const z of [-0.33, 0.33]) headBolts.push([c + dx, HB_Y + 0.015, z]);
+    head.add(bolts(headMat, headBolts.map(([x, , z]) => [x, (GAL_Y + HB_Y) / 2, z]), 'y', new THREE.CylinderGeometry(0.052, 0.058, HB_Y - GAL_Y, 14)));
+    // exhaust manifold studs (the nuts are their own part)
+    const exStuds = BORE_X.flatMap((x) => [[x - 0.2, 1.83], [x + 0.2, 1.83]]);
+    head.add(bolts(boltMat, exStuds.map(([x, y]) => [x, y, HZ + 0.035]), 'z', new THREE.CylinderGeometry(0.013, 0.013, 0.11, 8)));
     head.add(rbox(0.1, 0.16, 0.2, 0.03, headMat, HX + 0.05, 1.82, 0.12));
     root.add(
       ctx.part(head, {
@@ -827,6 +948,13 @@ export default {
         base: 'Il “coperchio” dei cilindri: contiene le valvole, gli iniettori al centro e le candelette. Nel diesel il fondo è piatto, perché la camera di scoppio è scavata nel pistone. I fori nella sezione sono i passaggi dell’acqua.',
         expert:
           'Testata in lega di alluminio a 4 valvole per cilindro con iniettore centrale verticale (nel suo pozzetto) e condotti di aspirazione che imprimono all’aria un moto vorticoso (swirl). Piano di combustione piatto: la camera è la tazza del pistone. In alto la galleria degli alberi a camme con i supporti e i cappelli imbullonati.',
+        explode: [0, 1.0, 0],
+      }),
+      ctx.part(bolts(boltMat, headBolts, 'y', screw(0.6, 0.04, 0.03)), {
+        id: 'headBolts',
+        name: 'Viti della testata',
+        base: 'Sedici viti lunghe e robuste che stringono la testata al basamento, schiacciando la guarnizione in mezzo. Nel diesel devono reggere pressioni di combustione altissime.',
+        expert: 'Viti ad alta resistenza che attraversano la testata e si avvitano nel basamento. Si serrano in più passate e in un ordine preciso, a spirale dal centro verso l’esterno, e si allentano nell’ordine inverso, per non deformare la testata. Spesso sono a snervamento (serraggio ad angolo) e vanno sostituite a ogni smontaggio.',
         explode: [0, 1.0, 0],
       })
     );
@@ -843,7 +971,10 @@ export default {
     for (const z of [-0.26, 0.26]) cover.add(rbox(3.0, 0.03, 0.04, 0.01, coverMat, 0, COVER_TOP + 0.012, z));
     const cvb = [];
     for (let x = -1.5; x <= 1.51; x += 0.5) cvb.push([x, COVER_TOP + 0.01, -0.34], [x, COVER_TOP + 0.01, 0.34]);
-    cover.add(bolts(boltMat, cvb, 'y'));
+    // elastomer gasket: it stays in its groove on the cover rim and comes off with it
+    const coverGasket = rrShape(-1.7, -0.42, 1.7, 0.42, 0.06);
+    coverGasket.holes.push(rrHole(-1.64, -0.36, 1.64, 0.36, 0.04));
+    cover.add(new THREE.Mesh(extY(coverGasket, HEAD_TOP - 0.006, HEAD_TOP + 0.006, 8), gasketMat));
     cover.add(mesh(new THREE.CylinderGeometry(0.07, 0.075, 0.05, 24), MAT.paint(0x111317, 0.6), 1.5, COVER_TOP + 0.025, 0.17));
     const plate = mesh(new THREE.PlaneGeometry(0.5, 0.125).rotateX(-Math.PI / 2), cut(new THREE.MeshStandardMaterial({ map: plateTexture(['MOTORILAB 1.6 CRD', '16V · common rail']), metalness: 0.6, roughness: 0.4 }), { cap: false }), -0.8, COVER_TOP + 0.003, 0.17);
     cover.add(plate);
@@ -852,7 +983,14 @@ export default {
         id: 'camCover',
         name: 'Coperchio punterie',
         base: 'Chiude in alto il motore e tiene dentro l’olio che bagna gli alberi a camme. Gli iniettori lo attraversano.',
-        expert: 'Coperchio in plastica o alluminio con separatore dei vapori d’olio (blow-by) e pozzetti a tenuta per gli iniettori.',
+        expert: 'Coperchio in plastica o alluminio con guarnizione in elastomero sul bordo, separatore dei vapori d’olio (blow-by) e pozzetti a tenuta per gli iniettori.',
+        explode: [0, 2.1, 0],
+      }),
+      ctx.part(bolts(boltMat, cvb, 'y', screw(0.38)), {
+        id: 'camCoverBolts',
+        name: 'Viti del coperchio',
+        base: 'Le viti che fissano il coperchio punterie alla testata, tutto intorno al bordo.',
+        expert: 'Si serrano poco e in modo uniforme: devono solo schiacciare la guarnizione in elastomero quanto basta per la tenuta dell’olio, senza deformare il coperchio.',
         explode: [0, 2.1, 0],
       })
     );
@@ -1095,20 +1233,18 @@ export default {
     const gpTipMat = MAT.darkSteel();
     gpTipMat.emissive.setHex(0xff5a14);
     gpTipMat.emissiveIntensity = 0;
-    const gpTips = BORE_X.map((x) => {
-      const g = new THREE.Group();
-      const tip = mesh(new THREE.CylinderGeometry(0.012, 0.015, 0.12, 12), gpTipMat, 0, 0.06, 0);
-      g.add(
-        tip,
-        mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.48, 12), steel, 0, 0.36, 0),
-        mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.05, 6), bucketMat, 0, 0.6, 0),
-        mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.08, 8), steel, 0, 0.66, 0)
-      );
-      g.position.set(x, HEAD_Y - 0.035, -0.075);
-      g.quaternion.setFromUnitVectors(UP, gpDir);
-      glowPlugs.add(g);
-      return tip;
-    });
+    // Instanced (local +Y along the plug axis, out of the head) so the wrench can unscrew them.
+    const gpQuat = new THREE.Quaternion().setFromUnitVectors(UP, gpDir);
+    const gpInst = (geo, mat) => {
+      const m = new THREE.InstancedMesh(geo, mat, BORE_X.length);
+      const mtx = new THREE.Matrix4();
+      BORE_X.forEach((x, i) => m.setMatrixAt(i, mtx.compose(V(x, HEAD_Y - 0.035, -0.075), gpQuat, V(1, 1, 1))));
+      glowPlugs.add(m);
+      return m;
+    };
+    const gpTips = [gpInst(new THREE.CylinderGeometry(0.012, 0.015, 0.12, 12).translate(0, 0.06, 0), gpTipMat)];
+    gpInst(mergeGeometries([new THREE.CylinderGeometry(0.022, 0.022, 0.48, 12).translate(0, 0.36, 0), new THREE.CylinderGeometry(0.012, 0.012, 0.08, 8).translate(0, 0.66, 0)]), steel);
+    gpInst(new THREE.CylinderGeometry(0.04, 0.04, 0.05, 6).translate(0, 0.6, 0), bucketMat);
     const gpEnd = V(0, HEAD_Y - 0.035, -0.075).addScaledVector(gpDir, 0.7);
     glowPlugs.add(tube(curve([[-1.55, gpEnd.y + 0.02, gpEnd.z - 0.04], [0, gpEnd.y + 0.03, gpEnd.z - 0.04], [1.3, gpEnd.y + 0.02, gpEnd.z - 0.04]]), 0.012, MAT.copper(), 40, 6));
     glowPlugs.add(rbox(0.1, 0.06, 0.08, 0.01, connMat, -1.6, gpEnd.y + 0.02, gpEnd.z - 0.04));
@@ -1186,9 +1322,6 @@ export default {
     const exMat = cut(MAT.paint(0x6b4a3a, 0.55));
     exMat.metalness = 0.8;
     exhaust.add(rbox(2.9, 0.16, 0.04, 0.02, exMat, 0, 1.79, HZ + 0.02));
-    const studs = [];
-    BORE_X.forEach((x) => studs.push([x - 0.2, 1.79, HZ + 0.05], [x + 0.2, 1.79, HZ + 0.05]));
-    exhaust.add(bolts(boltMat, studs, 'z'));
     const exhaustPaths = BORE_X.map((x) => {
       const pts = [[x, 1.79, HZ + 0.03], [x, 1.76, 0.58], [x - 0.12, 1.72, 0.66]];
       exhaust.add(tube(curve(pts), 0.075, exMat, 20, 12));
@@ -1202,6 +1335,14 @@ export default {
         name: 'Collettore di scarico',
         base: 'Raccoglie i gas bruciati dei quattro cilindri e li porta alla turbina del turbo.',
         expert: 'Collettore in ghisa al silicio-molibdeno o acciaio inox imbullonato alla testata con prigionieri, il più corto possibile per portare alla turbina gas caldi e pulsanti (sovralimentazione a impulsi).',
+        explode: [0, 0.1, 1.6],
+      }),
+      // flanged nuts on the head studs, local +Y out of the flange (+Z)
+      ctx.part(bolts(boltMat, exStuds.map(([x, y]) => [x, y, HZ + 0.063]), 'z', mergeGeometries([new THREE.CylinderGeometry(0.03, 0.03, 0.03, 6), new THREE.CylinderGeometry(0.036, 0.036, 0.008, 12).translate(0, -0.019, 0)])), {
+        id: 'exhaustNuts',
+        name: 'Dadi del collettore di scarico',
+        base: 'I dadi che stringono il collettore di scarico contro la testata. Sono avvitati su perni filettati, i prigionieri, che restano piantati nella testata.',
+        expert: 'Dadi flangiati, spesso ramati o autobloccanti, su prigionieri in acciaio: lavorano a centinaia di gradi e a ogni avviamento subiscono dilatazioni e ritiri, per questo col tempo tendono a bloccarsi sul filetto.',
         explode: [0, 0.1, 1.6],
       })
     );

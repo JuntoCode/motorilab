@@ -138,6 +138,40 @@ For piston engines add a `Distribuzione` row in `specs` (cinghia a secco / cingh
 ingranaggi / aste e bilancieri / nessuna, a luci) and list real versions in `variants`.
 Facts must be correct; if unsure about a specific engine, leave it out.
 
+### Taking parts off and the Officina guide (optional `disassembly`)
+Every part can be taken off from its card (**Togli**, or **Svita** for screws) or with a right click.
+Without rules a part simply lifts out. With `disassembly.parts` a part first needs the parts in its `after`
+list: pressing Togli on a held part shows "Prima togli …" and makes those parts glow orange.
+`disassembly.steps` adds the **Officina** tool: a guide that suggests an order, explains each step and
+highlights the parts to tap (› takes the next one off for you, ‹ puts the last one back, play does it all).
+Keep it educational and simplified: no torque values or real workshop procedures unless certain.
+```js
+disassembly: {
+  intro: 'One sentence.',
+  note: 'Simplified-sequence disclaimer (shown in the Officina tab of the sheet).',
+  parts: {                              // how each part comes off and what holds it
+    camCoverBolts: { motion: 'unscrew', turns: 6, out: 0.1 },
+    camCover: { after: ['camCoverBolts', 'ignitionCoils'], with: ['coverGasket'], dir: [0, 1, 0], dist: 0.8 },
+  },
+  steps: [                              // the guide: suggested order + text
+    { id: 'cover', name: 'Togli il coperchio', base: 'One sentence.', expert: '…', parts: ['camCoverBolts', 'camCover'] },
+  ],
+},
+```
+- `after`: parts that must be off first. A part hidden by the current option (e.g. the chain when the belt
+  is chosen) counts as off, so list all alternatives. No cycles.
+- `with`: parts that come off together with it (gasket with its cover, valves with the head).
+- `motion: 'lift'` (default) moves the part along `dir` (in the part's parent frame; default: its explode
+  direction) by `dist` and fades it. `motion: 'unscrew'` first spins every screw `turns` times while it backs out
+  by `out`, then moves the part away (`dist`, default 0.3) and fades it. Optional `duration` in seconds
+  (defaults 0.9 lift, 1.6 unscrew).
+- Screws: each instance of the part's `InstancedMesh`es, or (with no instanced mesh) each direct child of the
+  part's object, turning about and backing out along its own local **+Y**. So bolts are their own part
+  (see `screw()` in `petrol4t.js` and `screws()` in `moto4t.js`: hex head with its shank, +Y out of the hole).
+- Parts are put back in reverse order (undo stack). Changing an option puts everything back at once.
+- While the guide is open the engine is paused and `state.explode` is reported as 1, so flows hide.
+- `checkEngine()` validates ids, motions and cycles. References: `petrol4t.js`, `moto4t.js`.
+
 ### Seeing your model (works in a background tab)
 ```js
 const { shoot } = await import('/js/dev/capture.js?t=' + Date.now());
@@ -145,6 +179,39 @@ await shoot('<file>', { view: 'closed' });                       // -> .claude/s
 await shoot('<file>', { view: 'section', orbit: [-30, 15], zoom: 1.4, name: 'x' });
 await shoot('<file>', { explode: 1, name: 'x-exploded' });
 ```
+To save what the live engine page shows (e.g. mid-way through an Officina step), drive it by hand and use
+`snapLive`: `__viewer.manual = true; __viewer.step(0.05); await (await import('/js/dev/capture.js?t=1')).snapLive('name')`
+(set `__viewer.manual = false` afterwards).
 Then open the PNG with the Read tool (it shows images). Iterate: closed, section, exploded, a close-up.
 Reload your tab (navigate it to http://localhost:5173/?r=<n>#/) after editing helpers or the viewer;
 engine files are re-imported fresh on each call.
+
+## v3 — Officina games (every engine needs a `disassembly`)
+The Officina button opens three games played on the live model (`js/game/workshop.js`):
+**Smonta** (take the parts off in a valid order, against the clock), **Rimonta** (the parts start on the bench
+and go back in a valid order) and **Trova il pezzo** (find the named part; needs no data).
+Smonta and Rimonta are driven entirely by `disassembly`, so write it with the player in mind:
+- The parts listed in `steps` are the game's targets (plus their `with` parts). Aim for 10–22 targets in 5–10 steps.
+  Parts that are not in any step stay on the engine.
+- Tools: `motion: 'unscrew'` parts need the **wrench** (the player holds the pointer on them while the screws
+  turn), everything else comes off by **hand** (the player drags it along `dir`; an arrow shows the direction).
+  Give every engine 2–4 fastener parts so the wrench has work to do: make them their own `ctx.part`
+  (an `InstancedMesh` of screws, local +Y out of the hole — see `screw()` in `petrol4t.js`).
+- The game is played in the **closed** view, with the pointer: a part can only be grabbed when the player can
+  see it. So whatever hides a part (covers, casings, nacelles) must be in its `after` list and in an earlier step.
+  Inner parts become reachable only once the shell around them is on the bench.
+- `dir` is where the part visibly has room to move (in its parent's frame); `dist` far enough to clear its neighbours.
+- A wrong order or the wrong tool costs points and shows the `name`s of the blocking parts, so `after` must be
+  believable: "Prima togli: Viti del coperchio".
+- Step texts are shown as the goal ("Togli il coperchio") and in the guide; `base`/`expert` as usual.
+
+### Checking it (works in a background tab)
+Open `http://localhost:5173/?r=<n>#/anteprima/<file>` (change `<n>` to reload after an edit), then in the console:
+```js
+(await import('/js/dev/check.js?t=' + Date.now())).checkEngine('<file>')     // errors must be []
+const { playStrip } = await import('/js/dev/play.js?t=' + Date.now());
+await playStrip()   // plays Smonta with a synthetic pointer -> { removed, total, unreachable, ... }
+```
+`removed` must equal `total` and `unreachable` must be empty: an unreachable part is hidden by something that is
+not in its `after` list (or is too deep to see). Look at it too: `snapLive('name')` after `playStrip()` shows the
+stripped engine; `__ws.stop()` puts everything back.

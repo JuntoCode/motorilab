@@ -62,6 +62,17 @@ function chamberR(u) {
 
 const v3 = (x, y, z = 0) => new THREE.Vector3(x, y, z);
 const curve = (pts) => new THREE.CatmullRomCurve3(pts, false, 'centripetal');
+const EXH_CURVE = curve(EXH_PTS.map(([x, y]) => v3(x, y)));
+// Exhaust support struts [x0, y0, x1, y1] from the pipe to the crankcase, and the bolt just before each tip.
+const BELLY = EXH_CURVE.getPointAt(0.49);
+const STRUTS = [[BELLY.x - 0.35, BELLY.y, 0.8, BELLY.y - 0.1], [-0.88, -1.14, -0.64, -0.575]];
+const EXH_MOUNTS = STRUTS.map(([x0, y0, x1, y1]) => {
+  const l = Math.hypot(x1 - x0, y1 - y0);
+  return [x1 - ((x1 - x0) / l) * 0.05, y1 - ((y1 - y0) / l) * 0.05];
+});
+// Stud positions [x, z]: head studs in the barrel wall, base studs on the crankcase deck.
+const HEAD_STUDS = [0, 1, 2, 3].map((k) => [0.5 * Math.sin(Math.PI / 4 + (k * Math.PI) / 2), 0.5 * Math.cos(Math.PI / 4 + (k * Math.PI) / 2)]);
+const BASE_STUDS = [[-0.58, -0.47], [0.58, -0.47], [-0.58, 0.47], [0.58, 0.47]];
 
 // ---------- Closed-solid geometry helpers (section caps need watertight meshes) ----------
 // Flips a non-indexed geometry so its faces point outward (positive signed volume).
@@ -262,6 +273,25 @@ function bolts(items, mat, r = 0.028, h = 0.03) {
   m.instanceMatrix.needsUpdate = true;
   return m;
 }
+// Fasteners that come off in the Officina (motion 'unscrew'): one InstancedMesh at unit scale, each instance
+// with its local +Y pointing out of the hole. items: [[x,y,z], [nx,ny,nz]] (seat point, outward normal).
+function screws(items, mat, geo) {
+  const m = new THREE.InstancedMesh(geo, mat, items.length);
+  const up = v3(0, 1, 0);
+  const q = new THREE.Quaternion();
+  const N = new THREE.Vector3();
+  const M = new THREE.Matrix4();
+  const one = v3(1, 1, 1);
+  items.forEach(([p, n], i) => m.setMatrixAt(i, M.compose(v3(...p), q.setFromUnitVectors(up, N.set(...n).normalize()), one)));
+  m.instanceMatrix.needsUpdate = true;
+  return m;
+}
+// Hex head on the seat with its shank below it (local -Y).
+const screwGeo = (len, r, h) =>
+  mergeGeometries([new THREE.CylinderGeometry(r, r, h, 6).translate(0, h / 2, 0), new THREE.CylinderGeometry(r * 0.55, r * 0.55, len, 8).translate(0, -len / 2, 0)]);
+// Hex nut on a round washer.
+const nutGeo = (r, h) =>
+  mergeGeometries([new THREE.CylinderGeometry(r * 1.3, r * 1.3, h * 0.2, 16).translate(0, h * 0.1, 0), new THREE.CylinderGeometry(r, r, h, 6).translate(0, h * 0.7, 0)]);
 // Coil spring between two points.
 function spring(a, b, coils, rad, wire, mat) {
   const d = b.clone().sub(a);
@@ -414,6 +444,92 @@ export default {
       explain: 'Durante il lavaggio scarico e travasi sono aperti insieme e una parte della carica fugge in corto circuito. Per questo con l’Euro 5 quasi tutti i 2T stradali sono spariti; restano nel fuoristrada, nelle motoseghe e nelle versioni a iniezione (es. TPI).',
     },
   ],
+  // Officina (see CONTRACT.md): the top end comes apart from the outside in. The crankshaft, the one-piece
+  // conrod and the flywheel stay in the crankcase. Simplified and educational, not a workshop manual.
+  disassembly: {
+    intro: 'Smontiamo il gruppo termico: via accensione, carburatore e marmitta, poi testata, cilindro e pistone.',
+    note: 'Sequenza semplificata a scopo didattico: in officina si segue il manuale del costruttore, con i suoi attrezzi e le sue coppie di serraggio.',
+    parts: {
+      ignitionCoil: { dir: [0, 1, -0.6], dist: 0.9 },
+      sparkPlug: { after: ['ignitionCoil'], motion: 'unscrew', turns: 5, out: 0.26, dir: [0, 1, 0], dist: 0.5 },
+      carbClampScrews: { motion: 'unscrew', turns: 5, out: 0.07, dir: [0, 0, 1], dist: 0.3 },
+      carburetor: { after: ['carbClampScrews'], dir: [-1, 0, 0], dist: 1.1 },
+      reedValve: { after: ['carburetor'], dir: [-1, 0, 0], dist: 0.7 },
+      exhaustBolts: { motion: 'unscrew', turns: 6, out: 0.15, dir: [0, 0, 1], dist: 0.3 },
+      exhaustPipe: { after: ['exhaustBolts'], dir: [1, -0.2, 0], dist: 1.2, duration: 1.1 },
+      headNuts: { motion: 'unscrew', turns: 6, out: 0.1, dir: [0, 1, 0], dist: 0.4 },
+      head: { after: ['headNuts', 'sparkPlug'], dir: [0, 1, 0], dist: 0.9 },
+      cylinderNuts: { motion: 'unscrew', turns: 5, out: 0.06, dir: [0, 0, 1], dist: 0.35 },
+      // Ports and transfer channels are cast into the barrel: whichever is taken, the three leave together.
+      cylinder: { after: ['cylinderNuts', 'head', 'exhaustPipe'], with: ['ports', 'transferDucts'], dir: [0, 1, 0], dist: 1.3, duration: 1.2 },
+      ports: { after: ['cylinderNuts', 'head', 'exhaustPipe'], with: ['cylinder', 'transferDucts'], dir: [0, 1, 0], dist: 1.3, duration: 1.2 },
+      transferDucts: { after: ['cylinderNuts', 'head', 'exhaustPipe'], with: ['cylinder', 'ports'], dir: [0, 1, 0], dist: 1.3, duration: 1.2 },
+      piston: { after: ['cylinder'], dir: [0, 1, 0], dist: 0.8 },
+      // Not in the guide: the built-up crank and its one-piece conrod only leave together.
+      flywheel: { dir: [0, 0, -1], dist: 0.8 },
+      crankshaft: { after: ['piston', 'flywheel'], with: ['conrod'], dir: [0, 0, 1], dist: 1.2 },
+      conrod: { after: ['piston', 'flywheel'], with: ['crankshaft'], dir: [0, 0, 1], dist: 1.2 },
+      crankcase: { after: ['cylinder', 'reedValve', 'crankshaft'] },
+    },
+    steps: [
+      {
+        id: 'ignition',
+        name: 'Stacca la pipetta e la bobina',
+        base: 'Si sfila la pipetta di gomma dalla candela e si toglie la bobina con il suo cavo: da qui passa l’alta tensione.',
+        expert: 'La pipetta si tira dritta, afferrando il cappuccio e non il cavo, per non strappare il conduttore interno. Si scollega anche il filo che arriva dalla centralina CDI.',
+        parts: ['ignitionCoil'],
+      },
+      {
+        id: 'plug',
+        name: 'Svita la candela',
+        base: 'Con la chiave a tubo si svita la candela dal centro della testata.',
+        expert: 'Si svita a motore freddo, per non rovinare il filetto nell’alluminio. Nel 2 tempi il colore dell’isolante è un indizio prezioso: nocciola va bene, biancastro indica miscela magra, nero e untuoso miscela grassa o troppo olio.',
+        parts: ['sparkPlug'],
+      },
+      {
+        id: 'carb',
+        name: 'Stacca il carburatore',
+        base: 'Si allentano le viti delle due fascette e si sfila il carburatore, con il suo filtro e il manicotto di gomma.',
+        expert: 'Prima si chiude il rubinetto della benzina e si staccano il tubo del carburante e il cavo del gas, che esce dall’alto insieme alla valvola a ghigliottina. Il manicotto va controllato: una crepa fa entrare aria falsa e smagrisce la miscela.',
+        parts: ['carbClampScrews', 'carburetor'],
+      },
+      {
+        id: 'reed',
+        name: 'Sfila la valvola lamellare',
+        base: 'Tolto il carburatore, il pacco lamellare si sfila dalla sua sede nel carter insieme alla flangia: è un blocchetto a forma di tetto con le lamelle appoggiate sopra.',
+        expert: 'Le lamelle devono chiudere bene sulla gabbia: se sono scheggiate o restano sollevate, parte della miscela torna verso il carburatore e il motore perde spunto ai bassi regimi e fatica ad avviarsi.',
+        parts: ['reedValve'],
+      },
+      {
+        id: 'exhaust',
+        name: 'Togli la marmitta',
+        base: 'Si svitano le due viti che reggono la marmitta al carter, si sganciano le molle e si sfila il collettore dal cilindro.',
+        expert: 'Il collettore è solo infilato nel cilindro e trattenuto dalle molle: così la camera di espansione può vibrare e dilatarsi senza creparsi. Attenzione alle ammaccature: cambiano la forma interna e quindi l’accordo delle onde di pressione.',
+        parts: ['exhaustBolts', 'exhaustPipe'],
+      },
+      {
+        id: 'head',
+        name: 'Togli la testata',
+        base: 'Si svitano i quattro dadi e si solleva la testata: sotto compare il cielo del pistone.',
+        expert: 'I dadi si allentano a croce e un po’ alla volta, per non deformare la testata. Le incrostazioni sul cielo del pistone e nella camera raccontano come ha lavorato il motore; la guarnizione di rame va controllata o sostituita.',
+        parts: ['headNuts', 'head'],
+      },
+      {
+        id: 'cylinder',
+        name: 'Sfila il cilindro',
+        base: 'Si svitano i quattro dadi alla base e si sfila il cilindro verso l’alto, facendolo scorrere sul pistone. Con lui vengono via le luci e i condotti di travaso, ricavati nella sua parete.',
+        expert: 'Mentre il cilindro sale si sostiene il pistone, perché non urti il carter, e si copre l’imbocco del carter con un panno pulito. Sulla canna si cercano righe verticali e segni di grippaggio, soprattutto attorno alla luce di scarico.',
+        parts: ['cylinderNuts', 'cylinder'],
+      },
+      {
+        id: 'piston',
+        name: 'Togli il pistone',
+        base: 'Si toglie il fermo dello spinotto, si sfila lo spinotto e il pistone si stacca dalla biella. Biella e albero motore restano nel carter.',
+        expert: 'Lo spinotto è trattenuto da due anelli elastici e lavora su una gabbia a rullini nel piede di biella. La biella è in un pezzo solo e l’albero è piantato a pressa: per toglierli bisogna aprire i due semicarter, un lavoro da officina attrezzata.',
+        parts: ['piston'],
+      },
+    ],
+  },
   camera: { position: [2.15, 1.45, 6.1], target: [0, 0.28, 0] },
   thumb: { orbit: [28, 14], zoom: 1.15, view: 'section' },
 
@@ -517,6 +633,27 @@ export default {
     }
     crankcase.add(bolts(caseBolts, brightBolt, 0.026, 0.025));
     crankcase.add(bolts([[[0, -0.82, 0], [0, -1, 0]]], boltMat, 0.06, 0.04));
+    // Cylinder base studs (inside the flange and its nuts) and the bosses the exhaust brackets bolt to.
+    const baseStudGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.2, 10);
+    for (const [x, z] of BASE_STUDS) {
+      const s = new THREE.Mesh(baseStudGeo, hwSteel);
+      s.position.set(x, B_BOT - 0.065, z);
+      crankcase.add(s);
+    }
+    const mountBossGeo = new RoundedBoxGeometry(0.2, 0.14, 0.14, 2, 0.03);
+    for (const [x, y] of EXH_MOUNTS) {
+      const b = new THREE.Mesh(mountBossGeo, caseMat);
+      const r = Math.hypot(x, y);
+      b.position.set((x / r) * (r - 0.035), (y / r) * (r - 0.035), -0.11);
+      b.rotation.z = Math.atan2(y, x);
+      crankcase.add(b);
+    }
+    // Walls closing the intake opening of the drum on both sides of the reed housing.
+    for (const z of [-CASE_Z, 0.26]) {
+      const g = extrude(arcShape(0.74, 0.82, 160 * DEG, 200 * DEG, 12), CASE_Z - 0.26);
+      g.translate(0, 0, z);
+      crankcase.add(new THREE.Mesh(g, caseMat));
+    }
     root.add(
       ctx.part(crankcase, {
         id: 'crankcase',
@@ -569,7 +706,8 @@ export default {
     // Cooling fins, notched around the exhaust boss.
     const fullFin = ringShape(R_OUT - 0.005, 0.88);
     const notchFin = notchedFinShape(R_OUT - 0.005, 0.88, 0.37);
-    for (let i = 0; i < 11; i++) {
+    // (the lowest fin position is left free, so the base nuts can be reached with a wrench)
+    for (let i = 1; i < 11; i++) {
       const y = 1.0 + i * 0.093;
       const notched = y > 1.06 && y < 1.66;
       cylinder.add(new THREE.Mesh(plateGeo(notched ? notchFin : fullFin, y), barrelMat));
@@ -594,10 +732,13 @@ export default {
       h.position.set(0.89, 1.37, z);
       cylinder.add(h);
     }
-    // Base nuts and base gasket.
-    cylinder.add(
-      bolts([[-0.58, -0.47], [0.58, -0.47], [-0.58, 0.47], [0.58, 0.47]].map(([x, z]) => [[x, B_BOT, z], [0, 1, 0]]), brightBolt, 0.04, 0.035)
-    );
+    // Head studs (hidden inside the head until it is lifted off) and base gasket.
+    const headStudGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.5, 10);
+    for (const [x, z] of HEAD_STUDS) {
+      const s = new THREE.Mesh(headStudGeo, hwSteel);
+      s.position.set(x, 2.18, z);
+      cylinder.add(s);
+    }
     const gasketMat = cut(MAT.paint(0x2c2620, 0.8));
     const baseGasket = flangeShape.clone();
     cylinder.add(new THREE.Mesh(plateGeo(baseGasket, DECK_Y - 0.006, 0.012), gasketMat));
@@ -608,6 +749,14 @@ export default {
         base: 'Il tubo in cui scorre il pistone. Le alette all’esterno funzionano come un radiatore: l’aria che passa porta via il calore. Nella parete ci sono le finestre e i canali da cui passano i gas.',
         expert:
           'Cilindro in lega di alluminio con canna riportata al Nikasil (nichel + carburo di silicio). Raffreddamento ad aria nelle motoseghe e negli scooter; i 2T da cross moderni sono raffreddati a liquido. Le luci e i condotti sono ricavati di fusione e rifiniti: altezza e larghezza decidono fasatura e carattere del motore.',
+        explode: [0, 0.85, 0],
+      }),
+      ctx.part(screws(BASE_STUDS.map(([x, z]) => [[x, B_BOT, z], [0, 1, 0]]), brightBolt, nutGeo(0.04, 0.035)), {
+        id: 'cylinderNuts',
+        name: 'Dadi alla base del cilindro',
+        base: 'Quattro dadi che tengono il cilindro premuto sul carter, con una sottile guarnizione in mezzo.',
+        expert:
+          'Dadi avvitati sui prigionieri del carter. In molti motori gli stessi prigionieri, più lunghi, attraversano tutto il cilindro e fissano anche la testata; qui i due fissaggi sono separati. Lo spessore della guarnizione di base sposta l’altezza delle luci e quindi la fasatura.',
         explode: [0, 0.85, 0],
       })
     );
@@ -660,16 +809,15 @@ export default {
     );
     for (let i = 0; i < 4; i++) head.add(new THREE.Mesh(plateGeo(ringShape(0.6, 0.9 - i * 0.03), 2.05 + i * 0.085), headMat));
     head.add(new THREE.Mesh(pipe(0.62, 0.43, 0.012, 56).translate(0, HEAD_Y, 0), cut(MAT.copper())));
-    head.add(
-      bolts(
-        [0, 1, 2, 3].map((k) => {
-          const a = Math.PI / 4 + (k * Math.PI) / 2;
-          return [[0.5 * Math.sin(a), 2.385, 0.5 * Math.cos(a)], [0, 1, 0]];
-        }),
-        brightBolt,
-        0.045,
-        0.05
-      )
+    root.add(
+      ctx.part(screws(HEAD_STUDS.map(([x, z]) => [[x, 2.385, z], [0, 1, 0]]), brightBolt, nutGeo(0.045, 0.05)), {
+        id: 'headNuts',
+        name: 'Dadi della testata',
+        base: 'Quattro dadi che stringono la testata sul cilindro, avvitati su perni filettati (i prigionieri).',
+        expert:
+          'Dadi con rondella avvitati sui prigionieri. Si stringono a croce e in più passate, per schiacciare la guarnizione in modo uniforme; si allentano allo stesso modo, un po’ alla volta.',
+        explode: [0, 1.5, 0],
+      })
     );
     root.add(
       ctx.part(head, {
@@ -698,14 +846,17 @@ export default {
     );
     const coil = new THREE.Mesh(new RoundedBoxGeometry(0.3, 0.16, 0.2, 2, 0.04), MAT.paint(0x1d2024, 0.6));
     coil.position.set(0.05, 0.72, -0.8);
-    plug.add(plugTip, plugHex, plugBody, plugCap);
+    const plugTerminal = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.06, 10), MAT.chrome());
+    plugTerminal.position.y = 2.72;
+    plug.add(plugTip, plugHex, plugBody, plugTerminal);
+    // The rubber cap belongs to the lead: it is pulled off the plug together with the coil.
     const ignition = new THREE.Group();
-    ignition.add(lead, coil);
+    ignition.add(lead, coil, plugCap);
     root.add(
       ctx.part(ignition, {
         id: 'ignitionCoil',
         name: 'Bobina e cavo candela',
-        base: 'La bobina trasforma la corrente del volano magnete in un impulso ad altissima tensione, che il cavo porta alla candela.',
+        base: 'La bobina trasforma la corrente del volano magnete in un impulso ad altissima tensione, che il cavo porta alla candela attraverso la pipetta di gomma.',
         expert: 'Bobina d’accensione comandata dalla centralina CDI: il condensatore si scarica nel primario e il secondario genera 20–30 kV. Cavo con cappuccio antidisturbo (resistenza ≈ 5 kΩ) per non disturbare l’elettronica.',
         explode: [0, 0.3, -1.1],
       })
@@ -907,7 +1058,15 @@ export default {
     housingGeo.rotateY(Math.PI / 2);
     housingGeo.translate(-1.06, 0, 0);
     reed.add(new THREE.Mesh(housingGeo, caseMat));
-    reed.add(bolts([[0.27, 0.22], [0.27, -0.22], [-0.27, 0.22], [-0.27, -0.22]].map(([y, z]) => [[-1.06, y, z], [-1, 0, 0]]), brightBolt, 0.026, 0.025));
+    // Front plate of the housing with the round seat of the intake boot.
+    const bootHole = new THREE.Path();
+    bootHole.absarc(0, 0, 0.15, 0, Math.PI * 2, true);
+    housing.holes = [bootHole];
+    const frontPlateGeo = extrude(housing, 0.02);
+    frontPlateGeo.rotateY(Math.PI / 2);
+    frontPlateGeo.translate(-1.08, 0, 0);
+    reed.add(new THREE.Mesh(frontPlateGeo, caseMat));
+    reed.add(bolts([[0.27, 0.22], [0.27, -0.22], [-0.27, 0.22], [-0.27, -0.22]].map(([y, z]) => [[-1.08, y, z], [-1, 0, 0]]), brightBolt, 0.026, 0.025));
     root.add(
       ctx.part(reed, {
         id: 'reedValve',
@@ -948,10 +1107,18 @@ export default {
     );
     filter.position.x = -1.76;
     const clampRing = (r) => new THREE.TorusGeometry(r, 0.013, 6, 36).rotateY(Math.PI / 2);
-    for (const [x, r] of [[-1.09, 0.195], [-1.25, 0.195], [-1.8, 0.205]]) {
+    const CLAMP_X = [-1.11, -1.23];
+    for (const [x, r] of [[CLAMP_X[0], 0.197], [CLAMP_X[1], 0.197], [-1.8, 0.205]]) {
       const c = new THREE.Mesh(clampRing(r), hwSteel);
       c.position.x = x;
       carb.add(c);
+    }
+    // Screw housings of the two boot clamps; their screws are a part of their own (see below).
+    const clampBlockGeo = new THREE.BoxGeometry(0.036, 0.04, 0.08);
+    for (const x of CLAMP_X) {
+      const b = new THREE.Mesh(clampBlockGeo, hwSteel);
+      b.position.set(x, 0.225, 0);
+      carb.add(b);
     }
     const slide = new THREE.Group();
     slide.add(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.3, 0.2), MAT.chrome()));
@@ -968,11 +1135,19 @@ export default {
         expert:
           'Carburatore a valvola a ghigliottina con spillo conico e getti di minimo e massimo, vaschetta a galleggiante sotto. La dosatura imprecisa e le perdite in corto circuito sono incompatibili con l’Euro 5: i 2T moderni usano l’iniezione nei travasi (KTM/Husqvarna TPI) o diretta in camera (es. Evinrude E‑TEC), con l’olio dosato da una pompa separata.',
         explode: [-1.2, 0.3, 0],
+      }),
+      ctx.part(screws(CLAMP_X.map((x) => [[x, 0.225, 0.04], [0, 0, 1]]), brightBolt, screwGeo(0.08, 0.02, 0.022)), {
+        id: 'carbClampScrews',
+        name: 'Viti delle fascette',
+        base: 'Le viti che stringono le due fascette metalliche attorno al manicotto di gomma: sono loro a tenere fermo il carburatore.',
+        expert:
+          'Fascette a vite sul manicotto di aspirazione: il carburatore è montato elastico sulla gomma, che lo isola dalle vibrazioni del monocilindrico e dal calore del motore. Basta allentarle di qualche giro per sfilarlo.',
+        explode: [-1.2, 0.3, 0],
       })
     );
 
     // ---------- Exhaust: expansion chamber + silencer ----------
-    const exhCurve = curve(EXH_PTS.map(([x, y]) => v3(x, y)));
+    const exhCurve = EXH_CURVE;
     const exhMat = cut(MAT.paint(0x3a3e46, 0.32));
     exhMat.metalness = 0.85;
     const exhaust = new THREE.Group();
@@ -1001,9 +1176,17 @@ export default {
       exhaust.add(c);
     }
     const tabMat = boltMat;
-    const belly = exhCurve.getPointAt(0.49);
-    exhaust.add(strut(belly.x - 0.35, belly.y, 0.8, belly.y - 0.1, 0.05, 0.08, tabMat));
-    exhaust.add(strut(-0.88, -1.14, -0.58, -0.62, 0.05, 0.08, tabMat));
+    for (const s of STRUTS) exhaust.add(strut(...s, 0.05, 0.08, tabMat));
+    root.add(
+      ctx.part(screws(EXH_MOUNTS.map(([x, y]) => [[x, y, 0.04], [0, 0, 1]]), brightBolt, screwGeo(0.16, 0.034, 0.03)), {
+        id: 'exhaustBolts',
+        name: 'Viti di supporto della marmitta',
+        base: 'Due viti che fissano al carter le staffe della marmitta: ne reggono il peso, mentre le molle la tengono infilata nel cilindro.',
+        expert:
+          'Le staffe scaricano sul carter il peso e le vibrazioni della camera di espansione. Spesso sono montate su gommini (silent-block), perché la lamiera sottile si crepa facilmente se è fissata in modo rigido.',
+        explode: [1.1, 0, -0.5],
+      })
+    );
     root.add(
       ctx.part(exhaust, {
         id: 'exhaustPipe',

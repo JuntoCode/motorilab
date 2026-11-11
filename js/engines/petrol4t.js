@@ -3,6 +3,7 @@
 // section view shows real internals; selectable timing drive (dry belt, wet belt, chain).
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MAT, cut, lathe, pipe, flow, clamp, lerp } from '../core/helpers.js';
 
 const BORE_X = [-1.2, -0.4, 0.4, 1.2];
@@ -29,6 +30,7 @@ const COVER_TOP = 2.42;
 const XT = -1.92; // timing drive plane
 const XACC = -2.12; // accessory belt plane
 const R_CRANK_SPROCKET = 0.0725;
+const TIMING = ['dryBelt', 'wetBelt', 'chain']; // timing drive variants (option 'timing')
 const CAP_X = [-1.58, -0.8, 0, 0.8, 1.58]; // cam bearing caps / towers
 
 const wrap = (c) => ((c % 1) + 1) % 1;
@@ -123,6 +125,9 @@ function extX(shape, x0, x1, seg = 24) {
 
 // Rows of hex bolt heads as one InstancedMesh (axis: 'x' | 'y' | 'z').
 const HEX = new THREE.CylinderGeometry(0.024, 0.024, 0.02, 6);
+// Hex head + threaded shank of length `len` below it (local -Y), so a bolt backing out shows its shank.
+const screw = (len, r = 0.024, h = 0.02) =>
+  mergeGeometries([new THREE.CylinderGeometry(r, r, h, 6), new THREE.CylinderGeometry(r * 0.62, r * 0.62, len, 8).translate(0, -h / 2 - len / 2, 0)]);
 function bolts(mat, pts, axis = 'y', geo = HEX) {
   const m = new THREE.InstancedMesh(geo, mat, pts.length);
   const q = new THREE.Quaternion();
@@ -574,6 +579,115 @@ export default {
       explain: 'Nel ciclo Otto η = 1 − 1/r^(γ−1): più alta la compressione, più lunga l’espansione utile. Il limite pratico è la detonazione.',
     },
   ],
+  // Officina (see CONTRACT.md): how each part comes off and what holds it; the guide suggests an order.
+  // Simplified and educational, not a workshop manual.
+  disassembly: {
+    intro: 'Smontiamo la parte alta del motore fino a vedere i cilindri.',
+    note: 'Sequenza semplificata a scopo didattico: in officina si segue il manuale del costruttore, con i suoi attrezzi e le sue coppie di serraggio.',
+    parts: {
+      ignitionCoils: { dir: [0, 1, 0], dist: 0.7 },
+      camCoverBolts: { motion: 'unscrew', turns: 6, out: 0.1 },
+      camCover: { after: ['camCoverBolts', 'ignitionCoils'], with: ['coverGasket'], dir: [0, 1, 0], dist: 0.8 },
+      sparkPlugs: { after: ['ignitionCoils'], motion: 'unscrew', turns: 5, out: 0.12, dir: [0, 1, 0], dist: 0.8 },
+      accessoryDrive: { dir: [-1, 0, 0.4], dist: 0.9 },
+      ...Object.fromEntries(
+        TIMING.flatMap((k) => [
+          [`timingCover_${k}`, { after: ['accessoryDrive'], dir: [-1, 0, 0], dist: 0.9 }],
+          [`timing_${k}`, { after: [`timingCover_${k}`], dir: [-1, 0, 0], dist: 1.0 }],
+        ])
+      ),
+      camCapBolts: { after: ['camCover'], motion: 'unscrew', turns: 5, out: 0.1 },
+      camCaps: { after: ['camCapBolts'], dir: [0, 1, 0], dist: 0.6 },
+      camshafts: { after: ['camCaps', ...TIMING.map((k) => `timing_${k}`)], dir: [0, 1, 0], dist: 0.7 },
+      intakeValves: { after: ['camshafts'], dir: [0, 1, 0], dist: 0.8 },
+      exhaustValves: { after: ['camshafts'], dir: [0, 1, 0], dist: 0.8 },
+      intakeManifold: { with: ['injectors'], dir: [0, 0.2, -1], dist: 0.9 },
+      injectors: { dir: [0, 0.2, -1], dist: 0.9 },
+      exhaustManifold: { dir: [0, 0, 1], dist: 0.9 },
+      headBolts: { after: ['camshafts'], motion: 'unscrew', turns: 8, out: 0.3, dist: 0.5, duration: 2.2 },
+      cylinderHead: {
+        after: ['headBolts', 'intakeManifold', 'exhaustManifold', 'sparkPlugs'],
+        with: ['intakeValves', 'exhaustValves'],
+        dir: [0, 1, 0],
+        dist: 1.0,
+        duration: 1.2,
+      },
+      gaskets: { after: ['cylinderHead'], dir: [0, 1, 0], dist: 0.6 },
+      block: { after: ['gaskets'] },
+    },
+    steps: [
+      {
+        id: 'coils',
+        name: 'Stacca le bobine',
+        base: 'Si scollega il cablaggio e si sfilano le bobine dall’alto: ognuna è infilata sopra una candela.',
+        expert: 'Prima di tutto si stacca il polo negativo della batteria. Le bobine a matita escono tirandole dritte, dopo aver sganciato il connettore.',
+        parts: ['ignitionCoils'],
+      },
+      {
+        id: 'cover',
+        name: 'Togli il coperchio',
+        base: 'Si svitano le viti e si solleva il coperchio punterie: sotto ci sono gli alberi a camme.',
+        expert: 'Le viti si allentano un po’ alla volta; la guarnizione di gomma resta sul bordo del coperchio e va controllata o sostituita.',
+        parts: ['camCoverBolts', 'camCover'],
+      },
+      {
+        id: 'plugs',
+        name: 'Svita le candele',
+        base: 'Con una chiave a tubo lunga si svitano le candele dal fondo dei loro pozzetti.',
+        expert: 'Si svitano a motore freddo, per non rovinare il filetto nella testata di alluminio; il colore degli elettrodi racconta come lavora il motore.',
+        parts: ['sparkPlugs'],
+      },
+      {
+        id: 'aux',
+        name: 'Togli la cinghia servizi',
+        base: 'Si allenta il tendicinghia e si toglie la cinghia esterna con alternatore e puleggia: coprono la distribuzione.',
+        expert: 'Il tendicinghia automatico si ruota con una chiave per liberare la cinghia Poly-V; poi si smonta la puleggia smorzatrice sull’albero motore.',
+        parts: ['accessoryDrive'],
+      },
+      {
+        id: 'timingCover',
+        name: 'Togli il carter',
+        base: 'Si svita il coperchio laterale che protegge la distribuzione.',
+        expert: 'Con la cinghia a secco è un carter leggero in plastica; con cinghia a bagno d’olio o catena è un carter in alluminio a tenuta, con la sua guarnizione.',
+        parts: TIMING.map((k) => `timingCover_${k}`),
+      },
+      {
+        id: 'timing',
+        name: 'Togli la distribuzione',
+        base: 'Si bloccano gli alberi nella posizione giusta, si allenta il tenditore e si sfila la cinghia (o la catena).',
+        expert: 'Con gli attrezzi di fasatura si bloccano albero motore e alberi a camme: al rimontaggio la fase deve tornare identica, altrimenti valvole e pistoni possono toccarsi.',
+        parts: TIMING.map((k) => `timing_${k}`),
+      },
+      {
+        id: 'cams',
+        name: 'Togli gli alberi a camme',
+        base: 'Si svitano i cappelli che li tengono fermi e si sollevano gli alberi a camme.',
+        expert: 'Le viti dei cappelli si allentano poco per volta e in sequenza, perché le molle delle valvole spingono gli alberi verso l’alto. I cappelli sono numerati: ognuno torna al suo posto.',
+        parts: ['camCapBolts', 'camCaps', 'camshafts'],
+      },
+      {
+        id: 'manifolds',
+        name: 'Stacca i collettori',
+        base: 'Si staccano dai lati della testata il collettore di aspirazione, con gli iniettori, e quello di scarico.',
+        expert: 'Sul lato aspirazione si scollegano anche il tubo del carburante e i connettori degli iniettori; i dadi dello scarico, cotti dal calore, sono spesso duri da svitare.',
+        parts: ['intakeManifold', 'injectors', 'exhaustManifold'],
+      },
+      {
+        id: 'head',
+        name: 'Solleva la testata',
+        base: 'Si svitano le lunghe viti della testata e la si solleva insieme alle valvole.',
+        expert: 'Le viti si allentano nell’ordine inverso a quello di serraggio, dall’esterno verso il centro, per non deformare la testata. Le valvole restano al loro posto: per toglierle serve un attrezzo che comprime le molle.',
+        parts: ['headBolts', 'cylinderHead'],
+      },
+      {
+        id: 'gasket',
+        name: 'Togli la guarnizione',
+        base: 'Sotto la testata c’è la guarnizione: tolta quella, si vedono dall’alto i pistoni dentro i cilindri.',
+        expert: 'La guarnizione multistrato non si riusa: al rimontaggio se ne mette una nuova, dopo aver controllato che i piani di testata e basamento siano perfettamente piatti.',
+        parts: ['gaskets'],
+      },
+    ],
+  },
   camera: { position: [-4.7, 2.7, 6.3], target: [0, 0.75, 0] },
 
   build(ctx) {
@@ -725,16 +839,24 @@ export default {
     const headGasket = rrShape(-BX, -BZ, BX, BZ, 0.1);
     BORE_X.forEach((x) => headGasket.holes.push(circleHole(x, 0, 0.352)));
     gaskets.add(new THREE.Mesh(extY(headGasket, HEAD_Y - 0.006, HEAD_Y + 0.006, 32), gasketMat));
-    const coverGasket = rrShape(-1.7, -0.42, 1.7, 0.42, 0.06);
-    coverGasket.holes.push(rrHole(-1.64, -0.36, 1.64, 0.36, 0.04));
-    gaskets.add(new THREE.Mesh(extY(coverGasket, HEAD_TOP - 0.006, HEAD_TOP + 0.006, 8), gasketMat));
     root.add(
       ctx.part(gaskets, {
         id: 'gaskets',
-        name: 'Guarnizioni',
-        base: 'Strati sottili tra un pezzo e l’altro che impediscono a gas, olio e acqua di uscire. La più importante è la guarnizione della testata.',
-        expert: 'Guarnizione di testata multistrato in acciaio (MLS) con bordini attorno alle canne che reggono i 50–80 bar della combustione; guarnizione del coperchio in elastomero.',
+        name: 'Guarnizione della testata',
+        base: 'Uno strato sottile tra testata e basamento che impedisce a gas, olio e acqua di uscire: deve reggere la pressione dello scoppio.',
+        expert: 'Guarnizione di testata multistrato in acciaio (MLS) con bordini attorno alle canne che reggono i 50–80 bar della combustione. Va sostituita ogni volta che si smonta la testata.',
         explode: [0, 0.5, 0.2],
+      })
+    );
+    const coverGasketShape = rrShape(-1.7, -0.42, 1.7, 0.42, 0.06);
+    coverGasketShape.holes.push(rrHole(-1.64, -0.36, 1.64, 0.36, 0.04));
+    root.add(
+      ctx.part(new THREE.Mesh(extY(coverGasketShape, HEAD_TOP - 0.006, HEAD_TOP + 0.006, 8), gasketMat), {
+        id: 'coverGasket',
+        name: 'Guarnizione del coperchio',
+        base: 'Un cordone di gomma tra testata e coperchio punterie: tiene l’olio dentro il motore.',
+        expert: 'Guarnizione in elastomero sagomata, alloggiata in una gola del coperchio; di solito si cambia insieme al coperchio o quando trasuda olio.',
+        explode: [0, 2.0, 0],
       })
     );
 
@@ -758,11 +880,12 @@ export default {
     for (const s of [-1, 1]) head.add(rbox(2 * HX, HEAD_TOP - HEAD_Y, 0.06, 0.015, headMat, 0, (HEAD_Y + HEAD_TOP) / 2, s * (HZ - 0.03)));
     const capShape = rrShape(-0.3, HEAD_TOP, 0.3, 2.25, 0.03);
     for (const z of [-VALVE_Z, VALVE_Z]) capShape.holes.push(circleHole(-z, CAM_Y, 0.04));
-    for (const x of CAP_X) head.add(new THREE.Mesh(extX(capShape, x - 0.045, x + 0.045, 16), headMat));
+    const camCaps = new THREE.Group();
+    for (const x of CAP_X) camCaps.add(new THREE.Mesh(extX(capShape, x - 0.045, x + 0.045, 16), headMat));
     const capBolts = [];
     for (const x of CAP_X) for (const z of [-0.26, 0, 0.26]) capBolts.push([x, 2.26, z]);
-    for (const c of BORE_X) for (const dx of [-0.3, 0.3]) for (const z of [-0.33, 0.33]) capBolts.push([c + dx, GAL_Y + 0.012, z]);
-    head.add(bolts(boltMat, capBolts, 'y', new THREE.CylinderGeometry(0.03, 0.03, 0.025, 6)));
+    const headBolts = [];
+    for (const c of BORE_X) for (const dx of [-0.3, 0.3]) for (const z of [-0.33, 0.33]) headBolts.push([c + dx, GAL_Y + 0.012, z]);
     // thermostat housing on the gearbox end
     head.add(rbox(0.1, 0.16, 0.2, 0.03, headMat, HX + 0.05, 1.82, 0.12));
     root.add(
@@ -773,6 +896,29 @@ export default {
         expert:
           'Testata in alluminio con camere di combustione a tetto (pent-roof), condotti di aspirazione e scarico, pozzetti delle candele e camicie d’acqua. In alto la galleria degli alberi a camme con i supporti (torri) e i cappelli imbullonati. Due valvole per cilindro in questo modello didattico (nella realtà spesso quattro).',
         explode: [0, 1.0, 0],
+      })
+    );
+    root.add(
+      ctx.part(bolts(boltMat, headBolts, 'y', screw(0.55, 0.04, 0.03)), {
+        id: 'headBolts',
+        name: 'Viti della testata',
+        base: 'Sedici viti lunghe che stringono la testata al basamento, schiacciando la guarnizione in mezzo.',
+        expert: 'Viti (o prigionieri) ad alta resistenza che attraversano la testata e si avvitano nel basamento; si serrano in un ordine preciso, a spirale dal centro verso l’esterno, e si allentano nell’ordine inverso, per non deformare la testata. Spesso sono a snervamento e vanno sostituite.',
+        explode: [0, 1.0, 0],
+      }),
+      ctx.part(camCaps, {
+        id: 'camCaps',
+        name: 'Cappelli degli alberi a camme',
+        base: 'I “coperchietti” che tengono fermi gli alberi a camme sui loro supporti, come le staffe che tengono un tubo.',
+        expert: 'Cappelli lavorati insieme alla testata (non sono intercambiabili: sono numerati e orientati); con i supporti formano i cuscinetti di strisciamento degli alberi a camme, lubrificati in pressione.',
+        explode: [0, 1.95, 0],
+      }),
+      ctx.part(bolts(boltMat, capBolts, 'y', screw(0.28, 0.03, 0.025)), {
+        id: 'camCapBolts',
+        name: 'Viti dei cappelli',
+        base: 'Piccole viti che fissano i cappelli degli alberi a camme alla testata.',
+        expert: 'Si allentano a poco a poco e in sequenza, così gli alberi a camme (spinti dalle molle delle valvole) non si piegano.',
+        explode: [0, 1.95, 0],
       })
     );
 
@@ -788,7 +934,6 @@ export default {
     for (const z of [-0.26, 0.26]) cover.add(rbox(3.0, 0.03, 0.04, 0.01, coverMat, 0, COVER_TOP + 0.012, z));
     const cvb = [];
     for (let x = -1.5; x <= 1.51; x += 0.5) cvb.push([x, COVER_TOP + 0.01, -0.34], [x, COVER_TOP + 0.01, 0.34]);
-    cover.add(bolts(boltMat, cvb, 'y'));
     const filler = mesh(new THREE.CylinderGeometry(0.07, 0.075, 0.05, 24), MAT.paint(0x111317, 0.6), 1.45, COVER_TOP + 0.025, 0.16);
     cover.add(filler);
     const plate = mesh(new THREE.PlaneGeometry(0.5, 0.125).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: plateTexture(['MOTORILAB 1.6', 'DOHC · 4 cil.']), metalness: 0.6, roughness: 0.4 }), -0.82, COVER_TOP + 0.003, 0.17);
@@ -800,6 +945,13 @@ export default {
         name: 'Coperchio punterie',
         base: 'Chiude in alto il motore e tiene dentro l’olio che bagna gli alberi a camme. Dal tappo giallo-nero si rabbocca l’olio.',
         expert: 'Coperchio in plastica o magnesio con guarnizione; integra spesso il separatore dei vapori d’olio (blow-by) e il tappo di riempimento olio.',
+        explode: [0, 2.1, 0],
+      }),
+      ctx.part(bolts(boltMat, cvb, 'y', screw(0.38)), {
+        id: 'camCoverBolts',
+        name: 'Viti del coperchio',
+        base: 'Le viti che fissano il coperchio punterie alla testata.',
+        expert: 'Spesso hanno distanziali e gommini: il coperchio “galleggia” sulla guarnizione e trasmette meno vibrazioni e rumore.',
         explode: [0, 2.1, 0],
       })
     );

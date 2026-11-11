@@ -37,6 +37,28 @@ export async function checkEngine(file) {
   for (const ph of def.phases || []) {
     for (const p of ph.parts || []) if (!partIds.includes(p)) report.errors.push(`phase ${ph.id} lists unknown part ${p}`);
   }
+  // Officina: rules reference known parts, no cycles in `after`, guide steps list known parts.
+  if (def.disassembly) {
+    const rules = def.disassembly.parts || {};
+    for (const [id, r] of Object.entries(rules)) {
+      if (!partIds.includes(id)) report.errors.push(`disassembly rule for unknown part ${id}`);
+      for (const x of [...(r.after || []), ...(r.with || [])]) if (!partIds.includes(x)) report.errors.push(`disassembly ${id}: unknown part ${x}`);
+      if (r.motion && !['lift', 'unscrew'].includes(r.motion)) report.errors.push(`disassembly ${id}: unknown motion ${r.motion}`);
+    }
+    const seen = new Set();
+    const visit = (id, path) => {
+      if (path.includes(id)) return report.errors.push(`disassembly: cycle ${[...path, id].join(' > ')}`);
+      if (seen.has(id)) return;
+      seen.add(id);
+      for (const x of rules[id]?.after || []) visit(x, [...path, id]);
+    };
+    Object.keys(rules).forEach((id) => visit(id, []));
+    (def.disassembly.steps || []).forEach((st, i) => {
+      if (!st.name || !st.base) report.errors.push(`disassembly step ${i} needs name and base`);
+      if (!st.parts?.length) report.errors.push(`disassembly step ${st.id || i} has no parts`);
+      for (const x of st.parts || []) if (!partIds.includes(x)) report.errors.push(`disassembly step ${st.id || i} lists unknown part ${x}`);
+    });
+  }
   (def.quiz || []).forEach((q, i) => {
     if (q.options?.length !== 4 || q.correct == null || !q.explain) report.errors.push(`quiz ${i} malformed`);
   });

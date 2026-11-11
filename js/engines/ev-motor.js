@@ -238,6 +238,19 @@ function bolts(list, mat, r = 0.014, h = 0.014) {
 const boltCircleX = (x, cy, r, n, a0 = 0) =>
   Array.from({ length: n }, (_, i) => [x, cy + Math.cos(a0 + (i * TAU) / n) * r, Math.sin(a0 + (i * TAU) / n) * r, 'x']);
 
+// Screws that the Officina wrench can undo: hex head + shank below it (local -Y), so a screw backing out
+// shows its shank. One InstancedMesh; list of [x, y, z], local +Y turned to `out` (out of the hole).
+const screwGeo = (len, r = 0.014, h = 0.016) =>
+  mergeGeometries([new THREE.CylinderGeometry(r, r, h, 6), new THREE.CylinderGeometry(r * 0.6, r * 0.6, len, 8).translate(0, -h / 2 - len / 2, 0)]);
+function screws(list, out, mat, geo) {
+  const mesh = new THREE.InstancedMesh(geo, mat, list.length);
+  const q = new THREE.Quaternion().setFromUnitVectors(UP, new THREE.Vector3(...out).normalize());
+  const m = new THREE.Matrix4();
+  const s = new THREE.Vector3(1, 1, 1);
+  list.forEach(([x, y, z], i) => mesh.setMatrixAt(i, m.compose(new THREE.Vector3(x, y, z), q, s)));
+  return mesh;
+}
+
 // Generic warning / name plate (canvas texture, no real brands).
 function plate(lines, w, h, bg = '#e8c22a', fg = '#16181c') {
   const c = document.createElement('canvas');
@@ -287,6 +300,8 @@ function eesmPoleShape() {
   s.closePath();
   return s;
 }
+
+const ROTORS = ['rotore', 'rotoreAvvolto', 'gabbia']; // alternative rotor parts of the `motore` option
 
 const CAGE_BARS = 36;
 function cageSlot(j, w, h) {
@@ -483,6 +498,104 @@ export default {
         'In rigenerazione sono le ruote a far girare il motore: le calamite inducono corrente nello statore, l\'inverter la raddrizza e la batteria si ricarica. Si recupera una buona parte dell\'energia della frenata.',
     },
   ],
+  // Officina (see CONTRACT.md): how each part comes off and what holds it; the guide suggests an order.
+  // Simplified and educational, not a workshop manual. Pack, cells, motor housing and subframe stay as the base.
+  disassembly: {
+    intro: 'Smontiamo l’unità di trazione dall’esterno verso l’interno: cavi, inverter, riduttore e infine il motore, fino allo statore.',
+    note: 'Sequenza semplificata a scopo didattico. Su un’auto vera l’impianto ad alta tensione è pericoloso: ci lavora solo personale abilitato, seguendo le procedure del costruttore.',
+    parts: {
+      vitiConnettore: { motion: 'unscrew', turns: 5, out: 0.08, dir: [-1, 0, 0] },
+      caviHV: { after: ['vitiConnettore'], dir: [-1, 0.25, 0], dist: 0.9 },
+      vitiInverter: { motion: 'unscrew', turns: 5, out: 0.08, dir: [0, 1, 0] },
+      inverter: { after: ['vitiInverter', 'caviHV'], dir: [0, 1, 0], dist: 0.9 },
+      condensatore: { after: ['inverter'], dir: [0, 0, -1], dist: 0.8 },
+      moduliSiC: { after: ['inverter', 'condensatore'], dir: [0, 1, 0], dist: 0.8 },
+      sbarre: { after: ['moduliSiC'], dir: [0, 0.5, 1], dist: 0.7 },
+      ruota: { dir: [1, 0, 0], dist: 1.0 },
+      semiassi: { after: ['ruota'], dir: [0, 0, 1], dist: 1.0 },
+      vitiRiduttore: { motion: 'unscrew', turns: 6, out: 0.1, dir: [-1, 0, 0] },
+      cassaRiduttore: { after: ['vitiRiduttore', 'semiassi'], dir: [1, 0, 0], dist: 1.0 },
+      differenziale: { after: ['cassaRiduttore'], dir: [1, 0, 0], dist: 0.9 },
+      riduttore: { after: ['cassaRiduttore', 'differenziale'], dir: [1, 0, 0], dist: 0.9 },
+      vitiScudo: { after: ['caviHV'], motion: 'unscrew', turns: 6, out: 0.12, dir: [-1, 0, 0] },
+      scudo: { after: ['vitiScudo', 'caviHV'], dir: [-1, 0, 0], dist: 0.8 },
+      // The rotor comes out with its shaft; only one of the three rotor types is on the engine (option `motore`).
+      rotore: { after: ['scudo', 'riduttore'], with: ['magneti', 'albero'], dir: [-1, 0, 0], dist: 1.4, duration: 1.2 },
+      rotoreAvvolto: { after: ['scudo', 'riduttore'], with: ['albero'], dir: [-1, 0, 0], dist: 1.4, duration: 1.2 },
+      gabbia: { after: ['scudo', 'riduttore'], with: ['albero'], dir: [-1, 0, 0], dist: 1.4, duration: 1.2 },
+      magneti: { after: ['rotore'], dir: [-1, 0, 0], dist: 1.4 },
+      albero: { after: ROTORS, dir: [-1, 0, 0], dist: 1.4 },
+      statore: { after: [...ROTORS, 'sbarre'], with: ['hairpin'], dir: [-1, 0, 0], dist: 1.4, duration: 1.2 },
+      hairpin: { after: ['statore'], dir: [-1, 0, 0], dist: 1.4 },
+    },
+    steps: [
+      {
+        id: 'hv',
+        name: 'Stacca l’alta tensione',
+        base: 'Prima di tutto l’impianto ad alta tensione viene messo in sicurezza: batteria scollegata e tensione a zero. Poi si svitano le viti del connettore arancione e si sfilano i cavi dall’inverter.',
+        expert:
+          'In generale si apre il sezionatore di servizio della batteria, si aspetta che il condensatore del DC-link si scarichi e si verifica l’assenza di tensione. Il connettore ha anche un circuito di interblocco (HVIL): se viene sfilato, i contattori si aprono.',
+        parts: ['vitiConnettore', 'caviHV'],
+      },
+      {
+        id: 'inverterCase',
+        name: 'Apri l’inverter',
+        base: 'Si svitano le viti lungo il bordo e si solleva l’involucro di alluminio con i suoi due tubi del liquido di raffreddamento: sotto compare l’elettronica di potenza.',
+        expert: 'L’involucro fa anche da schermo contro i disturbi elettromagnetici e la sua guarnizione tiene fuori acqua e polvere. Prima di staccare i manicotti si svuota il circuito di raffreddamento.',
+        parts: ['vitiInverter', 'inverter'],
+      },
+      {
+        id: 'power',
+        name: 'Togli l’elettronica di potenza',
+        base: 'Si sfila il condensatore, poi si sollevano i moduli di potenza con la piastra fredda e la scheda di controllo; per ultime le tre sbarre di rame che scendono allo statore.',
+        expert:
+          'Condensatore e moduli sono uniti da sbarre laminate molto corte, per avere poca induttanza. Tra i moduli e la piastra fredda c’è un materiale termico d’interfaccia: il calore dei MOSFET deve passare al liquido incontrando la minima resistenza.',
+        parts: ['condensatore', 'moduliSiC', 'sbarre'],
+      },
+      {
+        id: 'wheel',
+        name: 'Togli ruota e semiassi',
+        base: 'Si toglie la ruota con il suo freno, poi si sfilano i due semiassi dal differenziale.',
+        expert: 'Il semiasse entra nel planetario del differenziale con un profilo scanalato ed è trattenuto da un anello elastico. Dal foro uscirebbe l’olio: per questo il riduttore si svuota prima.',
+        parts: ['ruota', 'semiassi'],
+      },
+      {
+        id: 'gearcase',
+        name: 'Apri il riduttore',
+        base: 'Si svitano le viti della flangia e si sfila la scatola di alluminio: dentro ci sono gli ingranaggi e il differenziale.',
+        expert: 'Le superfici di alluminio sono sigillate con una guarnizione o con sigillante liquido; le spine di centraggio garantiscono l’allineamento dei cuscinetti, da cui dipendono silenziosità e durata degli ingranaggi.',
+        parts: ['vitiRiduttore', 'cassaRiduttore'],
+      },
+      {
+        id: 'gears',
+        name: 'Togli gli ingranaggi',
+        base: 'Si sfila prima il differenziale con la sua grande corona, poi l’albero intermedio e il pignone montato sull’albero del motore.',
+        expert: 'Gli alberi poggiano su cuscinetti alloggiati nella scatola; al rimontaggio il loro gioco assiale si regola di solito con spessori calibrati.',
+        parts: ['differenziale', 'riduttore'],
+      },
+      {
+        id: 'shield',
+        name: 'Togli lo scudo del motore',
+        base: 'Si svitano le viti sul bordo e si toglie lo scudo, il coperchio che chiude il motore e regge un cuscinetto dell’albero.',
+        expert: 'Lo scudo centra il rotore dentro lo statore: tra i due c’è un traferro di circa un millimetro o meno. Sotto il cappellotto centrale c’è il resolver, che va scollegato.',
+        parts: ['vitiScudo', 'scudo'],
+      },
+      {
+        id: 'rotor',
+        name: 'Sfila il rotore',
+        base: 'Il rotore esce di lato insieme al suo albero. Se ha i magneti serve un attrezzo che lo guidi: le calamite lo tirano con forza contro lo statore.',
+        expert: 'I magneti al neodimio attirano il rotore verso i lamierini con una forza molto grande: lo si estrae con una guida che lo tiene centrato. I rotori avvolti e a gabbia, senza magneti, non hanno questo problema.',
+        parts: ROTORS,
+      },
+      {
+        id: 'stator',
+        name: 'Sfila lo statore',
+        base: 'Resta lo statore con le sue forcine di rame: si sfila dalla carcassa, che rimane sul telaio insieme al pacco batteria.',
+        expert: 'Spesso lo statore è montato a caldo nella carcassa (accoppiamento con interferenza), così il calore passa bene alla camicia di raffreddamento. Per toglierlo si scalda la carcassa di alluminio, che si dilata più dell’acciaio.',
+        parts: ['statore'],
+      },
+    ],
+  },
   camera: { position: [-4.0, 2.18, 5.59], target: [0.0, -0.22, -0.3] },
 
   build(ctx) {
@@ -584,6 +697,19 @@ export default {
       );
     });
     for (const c of cableCurves) hv.add(new THREE.Mesh(new THREE.TubeGeometry(c, 48, 0.024, 8, false), orange));
+    // HV plug on the inverter's end wall: it belongs to the cables and comes off with them.
+    const PLUG = [-1.09, 1.62, -0.3];
+    hv.add(new THREE.Mesh(new RoundedBoxGeometry(0.1, 0.16, 0.24, 2, 0.02), orange).translateX(PLUG[0]).translateY(PLUG[1]).translateZ(PLUG[2]));
+    const plugScrews = [];
+    for (const dy of [-0.052, 0.052]) for (const dz of [-0.093, 0.093]) plugScrews.push([PLUG[0] - 0.057, PLUG[1] + dy, PLUG[2] + dz]);
+    add(screws(plugScrews, [-1, 0, 0], MAT.chrome(), screwGeo(0.1, 0.013, 0.014)), {
+      id: 'vitiConnettore',
+      name: 'Viti del connettore ad alta tensione',
+      base: 'Quattro viti tengono il connettore arancione ben premuto contro l’inverter. Si toccano solo dopo aver messo in sicurezza l’impianto.',
+      expert:
+        'I connettori ad alta tensione sono schermati e protetti contro il contatto accidentale. Un circuito di interblocco a bassa tensione (HVIL) si accorge se il connettore viene sfilato e fa aprire i contattori della batteria.',
+      explode: [-0.6, 0.25, 0.45],
+    });
     add(hv, {
       id: 'caviHV',
       name: 'Cavi ad alta tensione e contattori',
@@ -612,10 +738,9 @@ export default {
       ib.push([x, INV.y + INV.h / 2 - 0.035, INV.d / 2 + 0.008, 'y'], [x, INV.y + INV.h / 2 - 0.035, -INV.d / 2 - 0.008, 'y']);
     }
     for (const z of [-0.25, 0, 0.25]) ib.push([INV.x - INV.w / 2 - 0.008, INV.y + INV.h / 2 - 0.035, z, 'y'], [INV.x + INV.w / 2 + 0.008, INV.y + INV.h / 2 - 0.035, z, 'y']);
-    invCase.add(bolts(ib, cut(MAT.chrome(), { cap: false }), 0.013, 0.02));
     for (let i = 0; i < 8; i++) invCase.add(new THREE.Mesh(new RoundedBoxGeometry(0.03, 0.03, INV.d - 0.1, 2, 0.01), invMat).translateX(INV.x - 0.6 + i * 0.17).translateY(INV.y + INV.h / 2 + 0.012));
-    // HV DC connector (cables enter here) and low-voltage signal connector
-    invCase.add(new THREE.Mesh(new RoundedBoxGeometry(0.1, 0.16, 0.24, 2, 0.02), MAT.paint(0xf07a1a, 0.5)).translateX(INV.x - INV.w / 2 - 0.04).translateY(1.62).translateZ(-0.3));
+    // HV DC socket (the orange plug of the cables sits on it) and low-voltage signal connector
+    invCase.add(new THREE.Mesh(new RoundedBoxGeometry(0.03, 0.2, 0.28, 2, 0.012), MAT.paint(0x1c1f24, 0.6)).translateX(INV.x - INV.w / 2 - 0.012).translateY(PLUG[1]).translateZ(PLUG[2]));
     invCase.add(new THREE.Mesh(new RoundedBoxGeometry(0.08, 0.07, 0.14, 2, 0.015), MAT.paint(0x1c1f24, 0.6)).translateX(INV.x + INV.w / 2 + 0.035).translateY(1.75).translateZ(0.15));
     // coolant pipes with hoses down to the motor water jacket
     const pipeGeo = alongX(new THREE.CylinderGeometry(0.03, 0.03, 0.12, 12));
@@ -642,6 +767,14 @@ export default {
         'Inverter integrato nell\'unità di trazione (architettura "3 in 1": motore, inverter, riduttore), che elimina i cavi trifase esterni. Involucro in alluminio pressofuso con piastra fredda a liquido e schermatura EMC.',
       explode: [0, 1.25, 0],
     });
+    add(screws(ib, [0, 1, 0], cut(MAT.chrome(), { cap: false }), screwGeo(0.05, 0.013, 0.02)), {
+      id: 'vitiInverter',
+      name: 'Viti dell’involucro inverter',
+      base: 'Le viti lungo il bordo che chiudono l’involucro dell’inverter, stringendo la guarnizione.',
+      expert:
+        'Tante viti ravvicinate schiacciano la guarnizione in modo uniforme: l’involucro deve restare stagno e fare da schermo continuo contro i disturbi elettromagnetici generati dalle commutazioni.',
+      explode: [0, 1.5, 0],
+    });
 
     const mods = new THREE.Group();
     mods.add(box(1.3, 0.03, 0.76, cut(MAT.aluminum()), INV.x, 1.54, 0)); // cold plate
@@ -659,6 +792,8 @@ export default {
       mods.add(box(0.06, 0.02, 0.05, MAT.copper(), mx, 1.6, 0.35));
     }
     mods.add(box(1.25, 0.012, 0.3, MAT.paint(0x1d6b3a, 0.6), INV.x, 1.8, -0.2)); // gate-driver board
+    // standoffs: the board stands on the cold plate, bridging the capacitor
+    for (const [x, z] of [[-0.9, -0.058], [-0.35, -0.058], [0.2, -0.058], [0.2, -0.33]]) mods.add(rod([x, 1.555, z], [x, 1.794, z], 0.007, MAT.steel(), 8));
     add(mods, {
       id: 'moduliSiC',
       name: 'Moduli di potenza SiC',
@@ -723,22 +858,28 @@ export default {
     for (const e of [-1, 1]) housing.add(new THREE.Mesh(alongX(pipe(0.62, 0.56, 0.03, 72)), hMat).translateX(e * 0.53));
     const ribGeo = alongX(pipe(0.645, 0.62, 0.03, 72));
     for (let i = 0; i < 6; i++) housing.add(new THREE.Mesh(ribGeo, hMat).translateX(-0.42 + i * 0.17));
+    // drive-end wall (gearbox side): closes the housing around the shaft, with a recess for the hairpin welds
+    housing.add(new THREE.Mesh(alongX(lathe([[0.082, 0.556], [0.585, 0.556], [0.585, 0.54], [0.622, 0.54], [0.622, 0.582], [0.082, 0.582], [0.082, 0.556]], 72)), hMat));
+    // End shield on the other side: its own part (and its bolts), so the rotor can be pulled out.
+    const shield = new THREE.Group();
+    shield.position.set(XM, YM, 0);
     const shieldMat = cut(MAT.aluminum());
     const shieldProf = [[0.07, -0.545], [0.6, -0.545], [0.635, -0.56], [0.635, -0.595], [0.3, -0.6], [0.16, -0.62], [0.1, -0.62], [0.07, -0.6], [0.07, -0.545]];
-    housing.add(new THREE.Mesh(alongX(lathe(shieldProf, 72)), shieldMat));
+    shield.add(new THREE.Mesh(alongX(lathe(shieldProf, 72)), shieldMat));
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * TAU + 0.2;
       const rib = box(0.03, 0.3, 0.025, shieldMat, -0.6, Math.cos(a) * 0.32, Math.sin(a) * 0.32);
       rib.rotation.x = a;
-      housing.add(rib);
+      shield.add(rib);
     }
     const capProf = [[0.0, -0.665], [0.115, -0.665], [0.13, -0.65], [0.13, -0.615], [0.12, -0.615], [0.12, -0.645], [0.11, -0.655], [0.0, -0.655]];
-    housing.add(new THREE.Mesh(alongX(lathe([...capProf, capProf[0]], 40)), shieldMat));
-    housing.add(bolts(boltCircleX(-0.6, 0, 0.6, 14, 0.1), cut(MAT.chrome(), { cap: false }), 0.014, 0.02));
+    shield.add(new THREE.Mesh(alongX(lathe([...capProf, capProf[0]], 40)), shieldMat));
+    const shieldBolts = screws(boltCircleX(-0.605, 0, 0.6, 14, 0.1), [-1, 0, 0], cut(MAT.chrome(), { cap: false }), screwGeo(0.08, 0.014, 0.02));
+    shieldBolts.position.set(XM, YM, 0);
     const np = plate(['MOTORILAB  EDU', '220 kW · 400 V', 'max 16.000 rpm'], 0.24, 0.13, '#c9cdd2', '#1c1f24');
     np.rotation.y = -Math.PI / 2;
     np.position.set(-0.61, 0.3, -0.3);
-    housing.add(np);
+    shield.add(np);
     // coolant nipples (hoses from the inverter) and rubber-bushed mounting arms
     const nipGeo = new THREE.CylinderGeometry(0.03, 0.035, 0.07, 14);
     for (const lx of [0.45, 0.2]) {
@@ -755,6 +896,22 @@ export default {
       expert:
         'Carcassa pressofusa in alluminio con camicia di raffreddamento (acqua-glicole) o spruzzatori d\'olio diretti sulle teste delle hairpin. Il calore da smaltire è piccolo (~5% della potenza) ma concentrato.',
       explode: [-0.2, 0.3, -1.15],
+    });
+    add(shield, {
+      id: 'scudo',
+      name: 'Scudo posteriore del motore',
+      base: 'Il coperchio che chiude il motore dal lato opposto al riduttore. Al centro regge un cuscinetto dell’albero; sotto il cappellotto c’è il sensore di posizione (resolver).',
+      expert:
+        'Scudo in alluminio con la sede del cuscinetto e nervature di irrigidimento; la targhetta riporta i dati di targa. Il cuscinetto di questo lato è spesso isolato elettricamente, o affiancato da un anello di messa a terra dell’albero, per evitare che le correnti indotte dall’inverter lo attraversino e lo rovinino.',
+      explode: [-0.9, 0.3, -1.15],
+    });
+    add(shieldBolts, {
+      id: 'vitiScudo',
+      name: 'Viti dello scudo',
+      base: 'Quattordici viti fissano lo scudo alla carcassa del motore.',
+      expert:
+        'Sono distribuite su tutta la circonferenza per chiudere lo scudo in modo uniforme: lo scudo porta un cuscinetto e deve restare perfettamente centrato rispetto allo statore.',
+      explode: [-1.2, 0.3, -1.15],
     });
 
     // ================= Stator core + slot conductors =================
@@ -1020,8 +1177,8 @@ export default {
     const gkGeo = new THREE.ExtrudeGeometry(gkHull, { depth: 0.006, bevelEnabled: false });
     gkGeo.rotateY(Math.PI / 2);
     gcase.add(new THREE.Mesh(gkGeo, cut(MAT.rubber())).translateX(0.3));
-    const hb = hull(0.018, 18).filter((_, i) => i % 3 === 0).filter(([u, v]) => Math.hypot(u, v - YM) > 0.64).map(([u, v]) => [0.045, v, -u, 'x']);
-    gcase.add(bolts(hb, cut(MAT.chrome(), { cap: false }), 0.013, 0.02));
+    // flange screws (their own part, below): heads on the motor side, clear of the motor's end wall
+    const hb = hull(0.018, 18).filter((_, i) => i % 3 === 0).filter(([u, v]) => Math.hypot(u, v - YM) > 0.66).map(([u, v]) => [0.04, v, -u]);
     gcase.add(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.03, 6), MAT.darkSteel()).translateX(0.4).translateY(YD - 0.405));
     gcase.add(new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.025, 0.06, 12), MAT.paint(0x1c1f24, 0.6)).translateX(0.4).translateY(YM + 0.18).translateZ(-0.06));
     add(gcase, {
@@ -1031,6 +1188,14 @@ export default {
       expert:
         'Carter pressofuso in alluminio, spesso in comune con il motore e con circuito d\'olio condiviso (olio ATF a bassa viscosità che lubrifica gli ingranaggi e raffredda le hairpin).',
       explode: [0.35, 0.1, -1.05],
+    });
+    add(screws(hb, [-1, 0, 0], cut(MAT.chrome(), { cap: false }), screwGeo(0.06, 0.013, 0.02)), {
+      id: 'vitiRiduttore',
+      name: 'Viti della scatola del riduttore',
+      base: 'Le viti della flangia che uniscono la scatola del riduttore al motore.',
+      expert:
+        'Serrano la flangia della scatola contro il motore; delle spine di centraggio, qui non rappresentate, mantengono allineati gli assi degli ingranaggi.',
+      explode: [0.05, 0.1, -1.05],
     });
 
     // ================= Differential =================

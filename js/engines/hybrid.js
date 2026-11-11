@@ -3,6 +3,7 @@
 // power control unit (inverters + boost converter) and a small high-voltage battery.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MAT, cut, lathe, pipe, flow, clamp } from '../core/helpers.js';
 
 const TAU = Math.PI * 2;
@@ -287,6 +288,23 @@ function bolts(list, mat, r = 0.014, h = 0.014) {
 const boltCircleX = (x, cy, r, n, a0 = 0) =>
   Array.from({ length: n }, (_, i) => [x, cy + Math.cos(a0 + (i * TAU) / n) * r, Math.sin(a0 + (i * TAU) / n) * r, 'x']);
 
+// Officina fasteners: hex head with its shank below it (local -Y), so a screw backing out shows the shank.
+const screwGeo = (len, r = 0.018, h = 0.018) =>
+  mergeGeometries([new THREE.CylinderGeometry(r, r, h, 6), new THREE.CylinderGeometry(r * 0.6, r * 0.6, len, 8).translate(0, -h / 2 - len / 2, 0)]);
+// One InstancedMesh of screws; list of [x, y, z, axis]: local +Y points out of the hole, along +axis ('x' | 'y').
+function screws(list, mat, geo) {
+  const mesh = new THREE.InstancedMesh(geo, mat, list.length);
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const p = new THREE.Vector3();
+  const s = new THREE.Vector3(1, 1, 1);
+  list.forEach(([x, y, z, ax], i) => {
+    q.setFromUnitVectors(UP, p.set(ax === 'x' ? 1 : 0, ax === 'x' ? 0 : 1, 0));
+    mesh.setMatrixAt(i, m.compose(p.set(x, y, z), q, s));
+  });
+  return mesh;
+}
+
 // Generic label plate (canvas texture, no real brands).
 function plate(lines, w, h, bg = '#e8c22a', fg = '#16181c') {
   const c = document.createElement('canvas');
@@ -475,6 +493,99 @@ export default {
         'Il full hybrid ha una batteria di circa 1 kWh ricaricata solo da motore e frenate; il PHEV ne ha 10-25 kWh, si collega alla rete e fa 50-80 km in elettrico. Il mild hybrid (MHEV) a 48 V invece non viaggia mai in solo elettrico.',
     },
   ],
+  // Officina (see CONTRACT.md): the strip-down is centred on the transaxle; petrol engine, battery, supports
+  // and wheel stay as the base. Simplified and educational, not a workshop manual.
+  disassembly: {
+    intro: 'Smontiamo la trasmissione ibrida dall’esterno verso il cuore: cavi, centralina, scatola, ingranaggi e i due motori elettrici.',
+    note: 'Sequenza semplificata a scopo didattico. Su un’auto vera l’impianto ad alta tensione va messo in sicurezza e toccato solo da tecnici abilitati, seguendo il manuale del costruttore.',
+    parts: {
+      vitiHV: { motion: 'unscrew', turns: 5, out: 0.05, dir: [0.3, 0.5, 1], dist: 0.3 },
+      caviHV: { after: ['vitiHV'], dir: [0.2, 1, 0.5], dist: 0.8 },
+      vitiPcu: { motion: 'unscrew', turns: 6, out: 0.08, dir: [0.5, 0, 1], dist: 0.3 },
+      pcu: { after: ['vitiPcu', 'caviHV'], dir: [0, 1, 0], dist: 0.9 },
+      mg2: { after: ['caviHV'], dir: [-1, 0, 0], dist: 0.9 },
+      semiasse: { dir: [0, -0.2, 1], dist: 0.9 },
+      vitiCassa: { motion: 'unscrew', turns: 6, out: 0.07, dir: [1, 0, 0.4], dist: 0.3, duration: 2 },
+      cassa: { after: ['vitiCassa', 'pcu', 'mg2', 'semiasse'], dir: [0.3, 0, 1], dist: 1.3, duration: 1.2 },
+      differenziale: { after: ['cassa', 'semiasse'], dir: [0, 0, 1], dist: 1.0 },
+      contralbero: { after: ['cassa'], dir: [0, 0, 1], dist: 1.0 },
+      rotoreMg2: { after: ['cassa', 'mg2'], dir: [-1, 0, 0], dist: 0.9 },
+      portaSatelliti: { after: ['cassa'], dir: [1, 0, 0.5], dist: 0.7 },
+      satelliti: { after: ['portaSatelliti'], dir: [1, 0, 0.5], dist: 0.7 },
+      solare: { after: ['satelliti'], dir: [1, 0, 0.5], dist: 0.7 },
+      corona: { after: ['satelliti'], dir: [0.5, 0, 1], dist: 0.9 },
+      mg1: { after: ['solare', 'corona'], dir: [1, 0, 0], dist: 0.9 },
+      rotoreMg1: { after: ['mg1'], dir: [1, 0, 0], dist: 0.7 },
+      smorzatore: { after: ['rotoreMg1'], dir: [1, 0, 0], dist: 0.55 },
+    },
+    steps: [
+      {
+        id: 'cavi',
+        name: 'Stacca i cavi arancioni',
+        base: 'Prima di tutto si mette in sicurezza l’alta tensione: si toglie il sezionatore arancione sulla batteria e si aspetta che la centralina si scarichi. Poi si svitano i connettori e si tolgono i cavi arancioni.',
+        expert:
+          'Tolto il sezionatore di servizio il circuito della batteria è aperto, ma i condensatori dell’inverter restano carichi per qualche minuto: si attende e si verifica con uno strumento l’assenza di tensione. ' +
+          'Solo allora si svitano i connettori: i cavi in continua verso la batteria e quelli trifase verso MG1 e MG2.',
+        parts: ['vitiHV', 'caviHV'],
+      },
+      {
+        id: 'pcu',
+        name: 'Togli la centralina di potenza',
+        base: 'Si svitano le viti dei piedini e si solleva la centralina: sotto restano la scatola del cambio e MG1.',
+        expert: 'Prima di sollevarla si staccano anche i tubi del liquido di raffreddamento della piastra fredda (qui non disegnati). Dentro ci sono i due inverter e il convertitore boost, con i condensatori che abbiamo lasciato scaricare.',
+        parts: ['vitiPcu', 'pcu'],
+      },
+      {
+        id: 'mg2',
+        name: 'Sfila lo statore di MG2',
+        base: 'Il guscio di MG2, con gli avvolgimenti di rame, si sfila di lato: il rotore con le calamite resta sul suo albero.',
+        expert: 'Lo statore è la parte fissa: lamierini e avvolgimenti trifase. I magneti permanenti del rotore lo attirano con forza anche a motore spento, quindi va sfilato ben dritto. Nei transaxle reali i due motori elettrici sono alloggiati dentro la scatola stessa.',
+        parts: ['mg2'],
+      },
+      {
+        id: 'semiasse',
+        name: 'Sfila il semiasse',
+        base: 'L’albero che porta il moto alla ruota è infilato nel differenziale: va sfilato prima di aprire la scatola.',
+        expert: 'Il giunto interno (tripode) è innestato con un profilo scanalato nel differenziale; sfilandolo può uscire dell’olio, per questo di solito il cambio si svuota prima.',
+        parts: ['semiasse'],
+      },
+      {
+        id: 'cassa',
+        name: 'Apri la scatola del cambio',
+        base: 'Si svitano le viti lungo la flangia e si toglie la scatola di alluminio: finalmente si vedono il rotismo e gli ingranaggi.',
+        expert: 'Le due metà sono unite da una corona di viti e sigillate da una guarnizione. Qui la scatola esce in un pezzo solo per semplicità; nella realtà si separano i due semigusci e gli alberi restano appoggiati ai cuscinetti di una metà.',
+        parts: ['vitiCassa', 'cassa'],
+      },
+      {
+        id: 'uscita',
+        name: 'Togli gli ingranaggi di uscita',
+        base: 'Si tolgono il differenziale, il contralbero con le sue tre ruote dentate e il rotore di MG2 con il suo pignone.',
+        expert: 'È la catena di riduzione verso le ruote: corona→contralbero 52/40, pignone di MG2 21/58, coppia finale 18/58. Sono ingranaggi sempre in presa, senza sincronizzatori né frizioni: non c’è nulla da innestare.',
+        parts: ['differenziale', 'contralbero', 'rotoreMg2'],
+      },
+      {
+        id: 'rotismo',
+        name: 'Smonta il rotismo epicicloidale',
+        base: 'Il cuore dell’ibrido: prima il portasatelliti, poi i tre satelliti, il solare e infine la corona.',
+        expert: 'Portasatelliti (motore termico), solare (MG1) e corona (uscita) sono coassiali: 30 e 78 denti, satelliti da 24. È tutto qui il «cambio» e-CVT: un solo rotismo, nessun rapporto da innestare.',
+        parts: ['portaSatelliti', 'satelliti', 'solare', 'corona'],
+      },
+      {
+        id: 'mg1',
+        name: 'Sfila MG1',
+        base: 'Ora che il rotismo non c’è più, lo statore di MG1 si sfila lungo l’albero; poi tocca al rotore, montato su un albero cavo.',
+        expert: 'Il rotore di MG1 è calettato sull’albero cavo del solare; al suo interno passa, libero di girare, l’albero d’ingresso che viene dal motore termico.',
+        parts: ['mg1', 'rotoreMg1'],
+      },
+      {
+        id: 'smorzatore',
+        name: 'Togli lo smorzatore',
+        base: 'Resta il disco con le molle, fissato al volano del motore a benzina, con il lungo albero d’ingresso.',
+        expert: 'Non c’è frizione: lo smorzatore torsionale collega in modo permanente albero motore e albero d’ingresso, filtrando le pulsazioni di coppia. Tolto questo, del gruppo ibrido restano il motore termico e la batteria.',
+        parts: ['smorzatore'],
+      },
+    ],
+  },
   camera: { position: [4.54, 2.52, 6.16], target: [0.12, -0.08, -0.2] },
 
   build(ctx) {
@@ -1087,10 +1198,11 @@ export default {
       for (const [y, r] of bl) tcase.add(new THREE.Mesh(alongX(pipe(r + 0.026, r, 0.04, 28)), cut(MAT.chrome())).translateX(x0 + 0.02).translateY(y));
     }
     // split flange with bolts, gasket line, ribs, plugs, breather
-    tcase.add(exX(hullRing(caseHull(0.035), caseHull(0)), 0.04, 0.04));
+    tcase.add(exX(hullRing(caseHull(0.045), caseHull(0)), 0.04, 0.04));
     tcase.add(exX(hullRing(caseHull(0.006), caseHull(-0.035)), 0.006, 0.08, cut(MAT.rubber())));
-    const fb = caseHull(0.018, 16).filter((_, i) => i % 2 === 0).map(([u, v]) => [0.088, v, -u, 'x']);
-    tcase.add(bolts(fb, cut(MAT.chrome(), { cap: false }), 0.013, 0.018));
+    // flange screws: their own part (Officina), heads on the +X face of the flange
+    const screwMat = cut(MAT.chrome(), { cap: false });
+    const caseScrews = caseHull(0.023, 16).filter((_, i) => i % 2 === 0).map(([u, v]) => [0.089, v, -u, 'x']);
     for (const z of [-0.26, 0.26]) tcase.add(new THREE.Mesh(new RoundedBoxGeometry(0.03, YA - YD, 0.035, 2, 0.01), caseMat).translateX(0.59).translateY((YA + YD) / 2).translateZ(z));
     tcase.add(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.03, 6), MAT.darkSteel()).translateX(0.3).translateY(YD - 0.575));
     tcase.add(new THREE.Mesh(alongX(new THREE.CylinderGeometry(0.03, 0.03, 0.03, 6)), MAT.darkSteel()).translateX(0.595).translateY(YC).translateZ(-0.3));
@@ -1101,6 +1213,14 @@ export default {
       base: 'La scatola di alluminio, in due metà imbullonate, che racchiude rotismo, ingranaggi e differenziale, immersi nell’olio. Ai suoi lati sono fissati MG1 e MG2.',
       expert:
         'Carter in lega di alluminio in due semigusci con guarnizione; un circuito d’olio lubrifica gli ingranaggi e raffredda i motori elettrici. Nessuna frizione, nessun innesto: solo ingranaggi sempre in presa, supportati da cuscinetti nelle pareti.',
+      explode: [0.3, 0.1, -1.15],
+    });
+    add(screws(caseScrews, screwMat, screwGeo(0.034)), {
+      id: 'vitiCassa',
+      name: 'Viti della scatola del cambio',
+      base: 'La corona di viti che stringe tra loro le due metà della scatola, lungo la flangia.',
+      expert:
+        'Viti disposte lungo tutta la flangia per schiacciare in modo uniforme la guarnizione: la scatola deve tenere l’olio che lubrifica gli ingranaggi e raffredda i motori elettrici.',
       explode: [0.3, 0.1, -1.15],
     });
 
@@ -1116,6 +1236,11 @@ export default {
     pcu.add(bolts(lb, cut(MAT.chrome(), { cap: false }), 0.012, 0.016));
     pcu.add(new THREE.Mesh(new RoundedBoxGeometry(0.08, 0.27, 0.3, 2, 0.02), pcuMat).translateX(-0.85).translateY(1.265).translateZ(-0.1));
     pcu.add(new THREE.Mesh(new RoundedBoxGeometry(0.08, 0.14, 0.3, 2, 0.02), pcuMat).translateX(0.3).translateY(1.33).translateZ(-0.1));
+    // mounting ears at the base of the two feet, screwed down to MG1 and to the transaxle case
+    pcu.add(new THREE.Mesh(new RoundedBoxGeometry(0.17, 0.024, 0.28, 2, 0.008), pcuMat).translateX(-0.745).translateY(1.145).translateZ(-0.1));
+    pcu.add(new THREE.Mesh(new RoundedBoxGeometry(0.2, 0.024, 0.28, 2, 0.008), pcuMat).translateX(0.42).translateY(1.272).translateZ(-0.1));
+    const pcuScrews = [];
+    for (const [x, y] of [[-0.72, 1.166], [0.48, 1.293]]) for (const z of [-0.2, 0]) pcuScrews.push([x, y, z, 'y']);
     pcu.add(box(1.3, 0.025, 0.68, cut(MAT.aluminum()), -0.28, 1.4, -0.05)); // cold plate
     const pcuSw = [];
     for (const [gx, n] of [[-0.75, 'mg1'], [-0.3, 'mg2']]) {
@@ -1130,7 +1255,7 @@ export default {
     pcu.add(coil);
     pcu.add(box(0.9, 0.16, 0.25, MAT.paint(0xb8952f, 0.45), -0.35, 1.5, -0.25));
     pcu.add(box(1.2, 0.012, 0.3, MAT.paint(0x1d6b3a, 0.6), -0.3, 1.66, -0.22));
-    pcu.add(new THREE.Mesh(new RoundedBoxGeometry(0.06, 0.12, 0.2, 2, 0.015), MAT.paint(0xf07a1a, 0.5)).translateX(0.47).translateY(1.52).translateZ(0.15));
+    pcu.add(new THREE.Mesh(new RoundedBoxGeometry(0.06, 0.14, 0.3, 2, 0.015), MAT.paint(0xf07a1a, 0.5)).translateX(0.47).translateY(1.52).translateZ(0.175));
     pcu.add(new THREE.Mesh(new RoundedBoxGeometry(0.12, 0.1, 0.06, 2, 0.015), MAT.paint(0xf07a1a, 0.5)).translateX(-0.95).translateY(1.47).translateZ(-0.47));
     pcu.add(new THREE.Mesh(new RoundedBoxGeometry(0.06, 0.07, 0.14, 2, 0.012), MAT.paint(0x1c1f24, 0.6)).translateX(0.47).translateY(1.6).translateZ(-0.25));
     const pl = plate(['ALTA TENSIONE', '650 V'], 0.26, 0.11);
@@ -1145,6 +1270,14 @@ export default {
       expert:
         'Due inverter trifase (IGBT o SiC) per MG1 e MG2 sullo stesso DC-link, più un convertitore boost (la bobina di rame) che eleva la tensione della batteria da ~200 V a 600-650 V. ' +
         'Raffreddamento a liquido su piastra fredda; la centralina ibrida coordina iniezione, MG1, MG2 e freni.',
+      explode: [0, 1.0, 0],
+    });
+    add(screws(pcuScrews, screwMat, screwGeo(0.07, 0.02, 0.018)), {
+      id: 'vitiPcu',
+      name: 'Viti di fissaggio della PCU',
+      base: 'Quattro viti che fissano i piedini della centralina di potenza sopra il cambio.',
+      expert:
+        'La centralina è montata direttamente sul transaxle per tenere corti i cavi trifase verso MG1 e MG2: meno peso, meno perdite e meno disturbi elettromagnetici.',
       explode: [0, 1.0, 0],
     });
 
@@ -1220,11 +1353,30 @@ export default {
     const cMG1 = curve([[-0.72, 1.39, 0.25], [-0.73, 1.26, 0.28], [-0.78, 1.12, 0.22]]);
     const cMG2 = curve([[-0.96, 1.45, -0.32], [-1.22, 1.25, -0.44], [-1.32, 0.4, -0.47], [-1.3, -0.25, -0.42], [-1.0, -0.42, -0.26]]);
     for (const c of [...cBatt, cMG1, cMG2]) hv.add(new THREE.Mesh(new THREE.TubeGeometry(c, 40, 0.022, 8, false), orange));
+    // plugs at the cable ends on the battery, MG1 and MG2 (the PCU has its own sockets)
+    const plugGeo = new RoundedBoxGeometry(0.16, 0.06, 0.12, 2, 0.015);
+    hv.add(new THREE.Mesh(new RoundedBoxGeometry(0.14, 0.05, 0.2, 2, 0.015), orange).translateX(0.84).translateY(0.972).translateZ(0.13));
+    hv.add(new THREE.Mesh(plugGeo, orange).translateX(-0.78).translateY(1.1).translateZ(0.22));
+    hv.add(new THREE.Mesh(plugGeo, orange).translateX(-1.0).translateY(-0.395).translateZ(-0.26));
     add(hv, {
       id: 'caviHV',
       name: 'Cavi ad alta tensione',
       base: 'I cavi arancioni collegano batteria, centralina di potenza e i due motori elettrici. Arancione vuol dire alta tensione.',
       expert: 'Cavi schermati: in continua tra batteria e PCU (~200 V), trifase tra PCU e MG1/MG2 (fino a ~650 V). Correnti di picco di qualche centinaio di ampere.',
+      explode: [0.2, 0.45, 0.45],
+    });
+    const hvScrews = [
+      [0.507, 1.52, 0.06, 'x'], [0.507, 1.52, 0.29, 'x'],            // PCU socket
+      [0.88, 1.004, 0.055, 'y'], [0.88, 1.004, 0.205, 'y'],          // battery plug
+      [-0.835, 1.137, 0.22, 'y'], [-0.725, 1.137, 0.22, 'y'],        // MG1 plug
+      [-1.05, -0.358, -0.235, 'y'], [-0.95, -0.358, -0.235, 'y'],    // MG2 plug
+    ];
+    add(screws(hvScrews, screwMat, screwGeo(0.035, 0.014, 0.014)), {
+      id: 'vitiHV',
+      name: 'Viti dei connettori ad alta tensione',
+      base: 'Piccole viti che tengono fermi i connettori dei cavi arancioni su batteria, centralina e motori elettrici.',
+      expert:
+        'I connettori ad alta tensione sono avvitati e schermati; molti hanno anche un circuito di sicurezza (interlock) che fa aprire i contattori della batteria se un connettore viene staccato.',
       explode: [0.2, 0.45, 0.45],
     });
 

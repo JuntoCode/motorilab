@@ -3,6 +3,7 @@
 // Scale ≈ 0.3 units per metre. Cycle 0..1 = one revolution of cylinder 1, starting at exhaust valve closing.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MAT, cut, lathe, pipe, flow, blade, ringX, clamp, lerp, smooth } from '../core/helpers.js';
 
 const CYL_X = [-0.48, 0, 0.48];
@@ -148,6 +149,28 @@ function boltCircle(cx, cy, cz, r, n, axis, sign = 1) {
   }
   return out;
 }
+// Fasteners that are their own part (Officina, see CONTRACT.md): one InstancedMesh of `geo`, seat at the
+// item position, local +Y out of the hole. items: [[x,y,z], [nx,ny,nz]].
+function fasteners(geo, items, mat) {
+  const m = new THREE.InstancedMesh(geo, mat, items.length);
+  const up = v3(0, 1, 0);
+  const q = new THREE.Quaternion();
+  const N = new THREE.Vector3();
+  const M = new THREE.Matrix4();
+  const one = v3(1, 1, 1);
+  items.forEach(([p, n], i) => m.setMatrixAt(i, M.compose(v3(...p), q.setFromUnitVectors(up, N.set(...n).normalize()), one)));
+  m.instanceMatrix.needsUpdate = true;
+  return m;
+}
+// Nut on a stud: hex body on a round collar, seat at y = 0 (the stud itself stays on the engine).
+const studNut = (r, h) =>
+  mergeGeometries([
+    new THREE.CylinderGeometry(r, r, h * 0.82, 6).translate(0, h * 0.59, 0),
+    new THREE.CylinderGeometry(r * 1.12, r * 1.12, h * 0.18, 16).translate(0, h * 0.09, 0),
+  ]);
+// Screwed-in plug: hex head above the seat, threaded shank of length `len` below it.
+const plugGeo = (r, h, len) =>
+  mergeGeometries([new THREE.CylinderGeometry(r, r, h, 6).translate(0, h / 2, 0), new THREE.CylinderGeometry(r * 0.55, r * 0.55, len, 8).translate(0, -len / 2, 0)]);
 const rbox = (w, h, d, r = 0.02) => new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2, h / 2, d / 2) * 0.99);
 
 function convexHull(pts) {
@@ -328,6 +351,79 @@ export default {
       explain: 'Con circa 160 g di combustibile per kWh supera il 50%: corsa lunghissima, regime basso, pressioni altissime e poche perdite di calore lo rendono il motore a combustione più efficiente.',
     },
   ],
+  // Officina (see CONTRACT.md): the piston overhaul from the top, with the engine-room crane.
+  // Simplified and educational, not a maintenance manual.
+  disassembly: {
+    intro: 'Revisione dall’alto: con il carroponte della sala macchine si apre la testa dei cilindri e si sfilano pistoni e camicie.',
+    note: 'Sequenza semplificata a scopo didattico: a bordo si segue il manuale del costruttore, con attrezzi idraulici e di sollevamento dedicati, e si lavora su un cilindro alla volta.',
+    parts: {
+      // The two alternatives of the `control` option: the one that is hidden counts as off.
+      hcu: { dir: [0, 0.5, 1], dist: 1.2 },
+      camshaft: { dir: [0.6, 0.2, 1], dist: 1.4 },
+      injectors: { after: ['hcu', 'camshaft'], dir: [0, 1, 0], dist: 0.9 },
+      exhaustValveNuts: { motion: 'unscrew', turns: 5, out: 0.07, dir: [0, 1, 0], dist: 0.4 },
+      exhaustValves: { after: ['exhaustValveNuts', 'hcu', 'camshaft'], dir: [0, 1, 0], dist: 1.2 },
+      coverNuts: { motion: 'unscrew', turns: 6, out: 0.09, dir: [0, 1, 0], dist: 0.5, duration: 2.0 },
+      cylinderCovers: { after: ['coverNuts', 'exhaustValves', 'injectors', 'hcu', 'camshaft'], dir: [0, 1, 0], dist: 1.3, duration: 1.2 },
+      // Piston, rod and stuffing box leave together, lifted out through the liner.
+      pistons: { after: ['cylinderCovers'], with: ['pistonRods', 'stuffingBox'], dir: [0, 1, 0], dist: 2.6, duration: 1.6 },
+      pistonRods: { after: ['cylinderCovers'], with: ['pistons', 'stuffingBox'], dir: [0, 1, 0], dist: 2.6, duration: 1.6 },
+      stuffingBox: { after: ['pistonRods'], dir: [0, 1, 0], dist: 2.6 },
+      lubeQuills: { motion: 'unscrew', turns: 5, out: 0.1, dir: [0, 0.3, 1], dist: 0.4 },
+      liners: { after: ['pistons', 'pistonRods', 'lubeQuills'], dir: [0, 1, 0], dist: 2.0, duration: 1.3 },
+      cylinderFrame: { after: ['liners', 'cylinderCovers'] },
+    },
+    steps: [
+      {
+        id: 'control',
+        name: 'Scollega il comando',
+        base: 'Si staccano i tubi ad alta pressione che portano l’olio di comando alle valvole di scarico e il combustibile agli iniettori. Nel modello, per semplicità, si sposta tutto il gruppo di comando.',
+        expert:
+          'Prima si scarica la pressione dai circuiti idraulici e del combustibile, poi si scollegano i tubi ad alta pressione dalle teste dei cilindri. Sul motore vero le unità idrauliche (HCU) o l’albero a camme, con pompe e catena, restano al loro posto.',
+        parts: ['hcu', 'camshaft'],
+      },
+      {
+        id: 'injectors',
+        name: 'Sfila gli iniettori',
+        base: 'Si sfilano dall’alto gli iniettori, con il loro tubo del combustibile: sono infilati nel coperchio, attorno alla valvola di scarico.',
+        expert:
+          'Gli iniettori si revisionano a intervalli regolari: su un banco prova si controllano la pressione di apertura e la forma del getto. L’olio pesante si tiene caldo e in circolazione anche a motore fermo, altrimenti si addensa nei tubi.',
+        parts: ['injectors'],
+      },
+      {
+        id: 'valves',
+        name: 'Togli le valvole di scarico',
+        base: 'Si svitano i quattro dadi di ogni valvola e il carroponte la solleva tutta intera, con il suo attuatore.',
+        expert:
+          'La valvola esce completa del suo corpo e viene sostituita con una già revisionata: sede e fungo si rettificano in officina. È uno dei lavori più frequenti, perché la valvola lavora immersa in gas a centinaia di gradi.',
+        parts: ['exhaustValveNuts', 'exhaustValves'],
+      },
+      {
+        id: 'covers',
+        name: 'Solleva i coperchi',
+        base: 'Si allentano i grandi dadi con l’attrezzo idraulico e il carroponte solleva i coperchi: ora si vede dall’alto il cielo dei pistoni.',
+        expert:
+          'I dadi si allentano tutti insieme, con martinetti idraulici collegati alla stessa pompa: così il coperchio si scarica in modo uniforme. Ogni coperchio pesa diverse tonnellate; sul motore vero si stacca prima anche il tratto di tubo che porta i gas dalla valvola al collettore di scarico.',
+        parts: ['coverNuts', 'cylinderCovers'],
+      },
+      {
+        id: 'pistons',
+        name: 'Sfila i pistoni',
+        base: 'Il carroponte aggancia il pistone e lo tira su attraverso la camicia, insieme alla sua lunga asta e al premistoppa.',
+        expert:
+          'Prima, dalle porte del basamento, si svita il piede dell’asta dalla testa a croce e si libera la flangia del premistoppa; poi si porta il pistone verso il punto morto superiore, si monta l’attrezzo di sollevamento sul cielo e si sfila tutto dall’alto. Fuori si controllano fasce, cave e usura della camicia.',
+        parts: ['pistons'],
+      },
+      {
+        id: 'liners',
+        name: 'Estrai le camicie',
+        base: 'Tolti gli ugelli dell’olio, la camicia si sfila verso l’alto dal blocco cilindri, come un grande tubo.',
+        expert:
+          'È il coperchio a stringere la camicia nella sua sede sul blocco cilindri. Si scollegano ugelli di lubrificazione e acqua di raffreddamento e la si solleva con una traversa. Si sostituisce quando l’usura dell’alesaggio supera il limite del costruttore, di solito dopo decine di migliaia di ore.',
+        parts: ['lubeQuills', 'liners'],
+      },
+    ],
+  },
   camera: { position: [4.39, 3.02, 8.38], target: [0.25, 1.6, 0.0] },
 
   build(ctx) {
@@ -449,10 +545,16 @@ export default {
     const cfBolts = [];
     const doorGeo2 = new THREE.CylinderGeometry(0.1, 0.1, 0.03, 32).rotateX(Math.PI / 2);
     const lubGeo = rbox(0.1, 0.08, 0.05, 0.015);
+    const studFlangeGeo = pipe(0.238, 0.213, 0.04, 40);
+    const coverStuds = [];
     for (const x of CYL_X) {
       const j = new THREE.Mesh(pipe(0.215, 0.2, 0.69, 40), cylFrameMat);
       j.position.set(x, 3.015, 0);
-      cylFrame.add(j);
+      // Flange under the cover with the eight cover studs.
+      const fl = new THREE.Mesh(studFlangeGeo, cylFrameMat);
+      fl.position.set(x, 3.34, 0);
+      cylFrame.add(j, fl);
+      coverStuds.push(...boltCircle(x, 3.34, 0, 0.215, 8, 'y'));
       // Scavenge box inspection cover and cylinder lubricator.
       const d = new THREE.Mesh(doorGeo2, cylFrameMat);
       d.position.set(x, 2.28, 0.565);
@@ -473,7 +575,7 @@ export default {
         cylFrame.add(n, dm);
       }
     }
-    cylFrame.add(bolts(cfBolts, hw, 0.012, 0.015));
+    cylFrame.add(bolts(cfBolts, hw, 0.012, 0.015), bolts(coverStuds, hw, 0.011, 0.222));
     root.add(
       ctx.part(cylFrame, {
         id: 'cylinderFrame',
@@ -491,6 +593,7 @@ export default {
     const liners = new THREE.Group();
     const webGeo = new THREE.BoxGeometry(0.022, PORT_TOP - PORT_BOT, 0.03);
     const quillMat = cut(MAT.brass());
+    const quills = [];
     for (const x of CYL_X) {
       const lo = new THREE.Mesh(pipe(0.16, 0.142, PORT_BOT - LINER_BOT, 40), linerMat);
       lo.position.set(x, (LINER_BOT + PORT_BOT) / 2, 0);
@@ -505,13 +608,10 @@ export default {
         w.rotation.y = a + 0.45;
         liners.add(w);
       }
-      // Cylinder oil quills.
+      // Cylinder oil quills: screwed into the liner through the cooling jacket (their own part, below).
       for (let i = 0; i < 8; i++) {
         const a = ((i + 0.5) / 8) * Math.PI * 2;
-        const q = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.08, 6).rotateX(Math.PI / 2), quillMat);
-        q.position.set(x + Math.sin(a) * 0.2, 2.95, Math.cos(a) * 0.2);
-        q.rotation.y = a;
-        liners.add(q);
+        quills.push([[x + Math.sin(a) * 0.215, 2.95, Math.cos(a) * 0.215], [Math.sin(a), 0, Math.cos(a)]]);
       }
     }
     root.add(
@@ -522,6 +622,14 @@ export default {
         expert:
           'Camicie in ghisa legata, alesaggio ≈ 0,92–0,96 m, con circa 20–30 luci di lavaggio tangenziali alla base. La lubrificazione dei cilindri è separata da quella del motore: un lubrificatore elettronico inietta olio cilindri alcalino (per neutralizzare l’acido solforico dello zolfo) da 6–10 ugelli a ogni giro, ≈ 0,6–1 g/kWh.',
         explode: [0, 1.5, 0],
+      }),
+      ctx.part(fasteners(plugGeo(0.014, 0.03, 0.055), quills, quillMat), {
+        id: 'lubeQuills',
+        name: 'Ugelli dell’olio cilindri',
+        base: 'Piccoli ugelli avvitati nella camicia, tutto intorno al cilindro: da qui entra l’olio che lubrifica le fasce del pistone.',
+        expert:
+          'Valvole di non ritorno (in gergo “quills”) che attraversano la camicia d’acqua e si avvitano nella camicia del cilindro: il lubrificatore vi manda una piccola dose di olio cilindri a ogni giro, o ogni pochi giri. Finché sono avvitate, la camicia non si può sfilare.',
+        explode: [0, 1.5, 0],
       })
     );
 
@@ -530,6 +638,7 @@ export default {
     const covers = new THREE.Group();
     const coverGeo = solidLathe([[0.085, 3.4], [0.142, COVER_Y], [0.25, COVER_Y], [0.25, 3.52], [0.085, 3.52]], 48);
     const coverNuts = [];
+    const valveStuds = [];
     const cageGeo = pipe(0.11, 0.085, 0.34, 36);
     for (const x of CYL_X) {
       const c = new THREE.Mesh(coverGeo, coverMat);
@@ -537,13 +646,15 @@ export default {
       const cage = new THREE.Mesh(cageGeo, coverMat);
       cage.position.set(x, 3.69, 0);
       covers.add(c, cage);
-      coverNuts.push(...boltCircle(x, 3.52, 0, 0.205, 10, 'y'));
+      coverNuts.push(...boltCircle(x, 3.52, 0, 0.215, 8, 'y'));
+      valveStuds.push(...boltCircle(x, 3.85, 0, 0.098, 4, 'y'));
       // Starting air valve and its branch to the manifold.
       const sav = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.035, 0.1, 16), coverMat);
       sav.position.set(x, 3.57, 0.17);
       covers.add(sav, tube([v3(x, 3.62, 0.17), v3(x, 3.7, 0.22), v3(x, 3.74, 0.3)], 0.018, coverMat, 12));
     }
-    covers.add(bolts(coverNuts, cut(MAT.chrome()), 0.024, 0.03));
+    // Studs of the exhaust valve housings (the cover nuts and the valve nuts are their own parts).
+    covers.add(bolts(valveStuds, coverMat, 0.008, 0.066));
     const startAir = new THREE.Mesh(solidLathe([[0.04, -0.78], [0.045, -0.78], [0.045, 0.78], [0.04, 0.78], [0.0, 0.78], [0, -0.78]], 20).rotateZ(Math.PI / 2), coverMat);
     startAir.position.set(0, 3.76, 0.3);
     covers.add(startAir);
@@ -555,6 +666,14 @@ export default {
         expert:
           'Coperchi in acciaio forgiato, raffreddati con fori trivellati, fissati da prigionieri idraulici. Devono reggere ≈ 200 bar su un diametro di quasi un metro: una forza di oltre 1 300 tonnellate a ogni giro.',
         explode: [0, 2.0, 0],
+      }),
+      ctx.part(fasteners(studNut(0.025, 0.034), coverNuts, cut(MAT.chrome())), {
+        id: 'coverNuts',
+        name: 'Dadi dei coperchi',
+        base: 'Otto grandi dadi per cilindro stringono ogni coperchio sui suoi prigionieri. Sono così grossi che nessuna chiave a mano basterebbe: per allentarli si usa la pressione dell’olio.',
+        expert:
+          'Dadi serrati idraulicamente: un martinetto ad anello, alimentato con olio ad altissima pressione, tira il prigioniero e lo allunga elasticamente; a quel punto il dado gira a mano e, tolta la pressione, il prigioniero resta teso. Così tutti i prigionieri hanno lo stesso precarico, senza attrito e senza torsione.',
+        explode: [0, 2.0, 0],
       })
     );
 
@@ -562,12 +681,19 @@ export default {
     const valveGeo = lathe([[0, 0], [0.075, 0], [0.075, 0.012], [0.03, 0.04], [0.014, 0.08], [0.014, 0.48], [0, 0.48]], 32);
     const valveMat = MAT.titanium();
     const exValves = new THREE.Group();
+    const valveNuts = [];
+    const valveFlangeGeo = new THREE.CylinderGeometry(0.125, 0.125, 0.024, 28);
     const valves = CYL_X.map((x) => {
       const v = new THREE.Mesh(valveGeo, valveMat);
       v.position.set(x, VALVE_Y, 0);
       exValves.add(v);
       const act = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.2, 24), MAT.paint(0x2b3440, 0.5));
       act.position.set(x, 3.96, 0);
+      // Housing flange sitting on the cage, held by four nuts.
+      const fl = new THREE.Mesh(valveFlangeGeo, MAT.paint(0x2b3440, 0.5));
+      fl.position.set(x, 3.872, 0);
+      exValves.add(fl);
+      valveNuts.push(...boltCircle(x, 3.884, 0, 0.098, 4, 'y'));
       const pipeH = tube([v3(x + 0.06, 3.98, 0), v3(x + 0.14, 4.02, -0.1), v3(x + 0.16, 3.9, -0.3)], 0.012, MAT.chrome(), 16);
       exValves.add(act, pipeH);
       return v;
@@ -579,6 +705,14 @@ export default {
         base: 'Una sola grande valvola per cilindro, larga quasi mezzo metro. Non c’è albero a camme: la apre un pistoncino spinto da olio ad alta pressione e la richiude un cuscino d’aria.',
         expert:
           'Valvola a fungo in Nimonic o con riporto in Stellite, diametro ≈ 0,45 m, alzata ≈ 120 mm. Attuatore idraulico a controllo elettronico (motori ME/RT-flex) e molla pneumatica di richiamo; alette sullo stelo la fanno ruotare a ogni apertura per distribuire usura e calore sulla sede.',
+        explode: [0, 2.5, 0],
+      }),
+      ctx.part(fasteners(studNut(0.018, 0.026), valveNuts, MAT.chrome()), {
+        id: 'exhaustValveNuts',
+        name: 'Dadi delle valvole di scarico',
+        base: 'Quattro dadi tengono ogni valvola di scarico, con il suo attuatore, sopra il coperchio del cilindro.',
+        expert:
+          'La valvola di scarico completa (corpo, sede, fungo, attuatore idraulico e molla pneumatica) è un blocco unico fissato al coperchio da quattro prigionieri con dadi serrati idraulicamente: si smonta intera e si revisiona in officina, mentre al suo posto se ne monta una di scorta.',
         explode: [0, 2.5, 0],
       })
     );

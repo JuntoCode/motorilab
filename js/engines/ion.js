@@ -3,6 +3,7 @@
 // The thruster is built along local +Y (lathe-friendly) and turned so the beam points to world +X.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MAT, cut, lathe, flow, clamp, lerp } from '../core/helpers.js';
 
 // ---------- Thruster stations (local frame: axis +Y, beam towards +Y) ----------
@@ -16,6 +17,8 @@ const A_GRID = 0.92; // grid dish radius
 const SAG = RS - Math.sqrt(RS * RS - A_GRID * A_GRID);
 const Y_SCREEN = Y_FRONT + SAG; // screen grid apex
 const Y_ACCEL = Y_FRONT + 0.04 + SAG; // accel grid apex
+const R_RING = A_GRID + 0.13; // grid mounting rings, outer radius
+const R_SCR = R_CH + 0.124; // plasma screen sleeve (slips over the rear shell)
 const BEAM_L = 3.3;
 const BEAM_DIV = Math.tan((12 * Math.PI) / 180);
 const NEUT = [-1.2, 0.42]; // neutralizer base (local x, y)
@@ -52,6 +55,21 @@ function strut(a, b, r, mat) {
   const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, d.length(), 10), mat);
   m.position.copy(a).add(b).multiplyScalar(0.5);
   m.quaternion.setFromUnitVectors(V(0, 1, 0), d.normalize());
+  return m;
+}
+
+// Hex head + shank below it (local -Y), so a screw backing out of its hole shows the shank.
+const screw = (len, r = 0.02, h = 0.016) =>
+  mergeGeometries([new THREE.CylinderGeometry(r, r, h, 6), new THREE.CylinderGeometry(r * 0.6, r * 0.6, len, 8).translate(0, -h / 2 - len / 2, 0)]);
+// One InstancedMesh of fasteners from [position, direction out of the hole] pairs (local +Y -> direction).
+function fasteners(geo, mat, list) {
+  const m = new THREE.InstancedMesh(geo, mat, list.length);
+  const mtx = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const one = V(1, 1, 1);
+  list.forEach(([p, d], i) => m.setMatrixAt(i, mtx.compose(p, q.setFromUnitVectors(V(0, 1, 0), d.clone().normalize()), one)));
+  m.instanceMatrix.needsUpdate = true;
+  m.computeBoundingSphere();
   return m;
 }
 
@@ -288,7 +306,7 @@ export default {
     {
       id: 'acceleration',
       name: 'Accelerazione tra le griglie',
-      parts: ['grids', 'ppu'],
+      parts: ['grids', 'screenGrid', 'ppu'],
       base:
         'Davanti alla camera ci sono due griglie parallele piene di migliaia di forellini. Fra le due c’è una tensione di oltre mille volt: gli ioni che arrivano a un buco vengono “risucchiati” e sparati fuori a circa 40 km/s, più di 140.000 km/h. ' +
         'L’unità di potenza (PPU) trasforma l’elettricità dei pannelli nelle tensioni che servono.',
@@ -371,6 +389,86 @@ export default {
         'Il campo a cuspidi fa percorrere agli elettroni lunghe traiettorie a spirale prima di raggiungere la parete: più urti con gli atomi, più ioni con la stessa potenza.',
     },
   ],
+  // Officina (see CONTRACT.md): a simplified clean-room strip-down. The chamber on its mount, the tank and
+  // the bus stay as the base. Rules for parts in the thruster group use its frame (+Y = beam direction).
+  disassembly: {
+    intro: 'Smontiamo il propulsore sul banco della camera pulita, dal vano della sonda fino alla camera di scarica nuda.',
+    note: 'Sequenza semplificata a scopo didattico: un propulsore di volo si smonta solo in camera pulita, seguendo le procedure del costruttore e dopo aver messo in sicurezza xeno e alta tensione.',
+    parts: {
+      panelScrews: { motion: 'unscrew', turns: 5, out: 0.08, dir: [0, 0, 1], dist: 0.3 },
+      busPanel: { after: ['panelScrews'], dir: [0, 0, 1], dist: 1.3 },
+      ppu: { after: ['busPanel'], dir: [0, 0, 1], dist: 1.7 },
+      solarArray: { after: ['ppu'], dir: [0, 1, 0], dist: 1.0 },
+      feedUnions: { after: ['busPanel'], motion: 'unscrew', turns: 4, out: 0.07, dir: [0, 0.5, 1], dist: 0.3 },
+      feedSystem: { after: ['busPanel', 'feedUnions'], dir: [0, 0, 1], dist: 1.7 },
+      neutralizer: { after: ['feedUnions'], dir: [-1, 0.3, 0], dist: 0.8 },
+      gridScrews: { motion: 'unscrew', turns: 6, out: 0.1, dir: [0, 1, 0], dist: 0.3 },
+      grids: { after: ['gridScrews'], dir: [0, 1, 0], dist: 1.0 },
+      screenGrid: { after: ['grids'], dir: [0, 1, 0], dist: 1.0 },
+      cathode: { after: ['screenGrid', 'feedSystem'], dir: [0, 1, 0], dist: 1.6 },
+      screenScrews: { motion: 'unscrew', turns: 4, out: 0.05, dir: [0, 0, 1], dist: 0.25 },
+      plasmaScreen: { after: ['screenScrews', 'neutralizer'], dir: [0, 1, 0], dist: 1.3 },
+      magnets: { after: ['plasmaScreen', 'screenGrid'], dir: [0, 1, 0], dist: 1.3 },
+    },
+    steps: [
+      {
+        id: 'panel',
+        name: 'Apri il vano della sonda',
+        base: 'Si svitano le viti e si toglie il pannello dorato: dietro ci sono il serbatoio di xeno, le valvole e l’elettronica del motore.',
+        expert: 'Si lavora in camera pulita, con guanti e bracciale antistatico. La coperta isolante resta attaccata al pannello; le viti tolte si contano una per una, perché nulla deve restare dentro il satellite.',
+        parts: ['panelScrews', 'busPanel'],
+      },
+      {
+        id: 'power',
+        name: 'Stacca l’alimentazione elettrica',
+        base: 'Prima di toccare il motore si toglie la corrente: si scollegano i cavi e si sfila l’unità di potenza, poi si smonta il tratto di pannello solare.',
+        expert: 'La PPU genera fino a ~1800 V: si interviene solo con il bus spento, i condensatori scaricati e le uscite ad alta tensione messe a massa. Nelle prove a terra, al posto dei pannelli si usano alimentatori che ne simulano il comportamento.',
+        parts: ['ppu', 'solarArray'],
+      },
+      {
+        id: 'feed',
+        name: 'Scollega lo xeno',
+        base: 'Si svitano i raccordi dei tubicini e si toglie il gruppo delle valvole con le sue tre linee: una per la camera, una per il catodo e una per il neutralizzatore.',
+        expert: 'Prima si chiude la valvola del serbatoio e si scarica la pressione rimasta nelle linee. Appena aperti, i raccordi si tappano: lo xeno deve restare purissimo e l’inserto dei catodi cavi si rovina a contatto con ossigeno e umidità.',
+        parts: ['feedUnions', 'feedSystem'],
+      },
+      {
+        id: 'neutralizer',
+        name: 'Stacca il neutralizzatore',
+        base: 'Liberato dal suo tubicino, il piccolo catodo esterno si toglie dal fianco del motore insieme alla sua staffa.',
+        expert: 'Si scollegano anche i fili del riscaldatore e del keeper. Il neutralizzatore sta fuori dal fascio, inclinato verso di esso: abbastanza vicino da accoppiarsi con il plasma, abbastanza lontano da non essere eroso dagli ioni.',
+        parts: ['neutralizer'],
+      },
+      {
+        id: 'grids',
+        name: 'Smonta le griglie',
+        base: 'Si svita la corona di viti e si sollevano le due griglie: prima quella esterna (accel), poi quella interna (screen). Sono sottilissime e si prendono solo dal bordo.',
+        expert: 'Sono il pezzo più delicato del motore: spesse meno di un millimetro, si maneggiano dall’anello di irrigidimento. Al rimontaggio distanza e allineamento dei fori si ricontrollano punto per punto, perché da loro dipendono la focalizzazione dei beamlet e la durata.',
+        parts: ['gridScrews', 'grids', 'screenGrid'],
+      },
+      {
+        id: 'cathode',
+        name: 'Sfila il catodo',
+        base: 'Con la camera aperta si vede il catodo cavo sul fondo: si libera la sua flangia e lo si sfila.',
+        expert: 'Il catodo di scarica è flangiato al centro del fondo della camera, isolato elettricamente da essa. Smontato, va conservato in atmosfera secca: l’inserto impregnato di ossido di bario assorbe umidità e perde la capacità di emettere elettroni.',
+        parts: ['cathode'],
+      },
+      {
+        id: 'screen',
+        name: 'Togli lo schermo di plasma',
+        base: 'Si svitano le viti tutt’attorno e si sfila in avanti la lamiera forata: sotto compare la parete della camera con gli anelli di magneti.',
+        expert: 'Lo schermo è a massa mentre la camera lavora ad alta tensione: fra i due c’è solo il vuoto e qualche isolatore. Tolto lo schermo si controlla che nell’intercapedine non ci siano scaglie metalliche, che in funzione potrebbero innescare un arco.',
+        parts: ['screenScrews', 'plasmaScreen'],
+      },
+      {
+        id: 'magnets',
+        name: 'Sfila i magneti',
+        base: 'Per ultimi si tolgono gli anelli di magneti dalla parete della camera. Sono potenti e fragili: si attirano tra loro con forza. Resta la camera di scarica nuda sul suo supporto.',
+        expert: 'Nella realtà ogni anello è fatto di tanti piccoli magneti in samario-cobalto, tenuti da fermi sulla parete esterna dell’anodo. Dopo il rimontaggio si rimisura la mappa del campo magnetico, per verificare che le cuspidi siano tornate uniformi.',
+        parts: ['magnets'],
+      },
+    ],
+  },
   camera: { position: [4.9, 2.5, 8.0], target: [0.35, 0.35, 0] },
 
   build(ctx) {
@@ -406,6 +504,7 @@ export default {
     const cableRed = MAT.paint(0xa8322a, 0.6);
     const ppuMat = MAT.paint(0x4b5563, 0.5);
     const finMat = MAT.aluminum();
+    const screwMat = cut(MAT.steel(), { cap: false });
 
     // ---------- Spacecraft bus (context, not clickable) ----------
     // Hollow box of MLI-covered panels; the +X side is the aluminium thruster mounting panel.
@@ -420,7 +519,6 @@ export default {
     };
     const B = (w, h, d) => new THREE.BoxGeometry(w, h, d);
     addBox(B(bw, 2 * BY, BT), goldMLI, bcx, 0, -BZ + BT / 2);
-    addBox(B(bw, 2 * BY, BT), goldMLI, bcx, 0, BZ - BT / 2);
     addBox(B(bw, BT, 2 * BZ - 2 * BT), goldMLI, bcx, BY - BT / 2, 0);
     addBox(B(bw, BT, 2 * BZ - 2 * BT), goldMLI, bcx, -BY + BT / 2, 0);
     addBox(B(BT, 2 * BY - 2 * BT, 2 * BZ - 2 * BT), goldMLI, x0 + BT / 2, 0, 0);
@@ -443,6 +541,35 @@ export default {
       [V(x1 + 0.01, 0, -0.8), L2W(0, -0.6, -0.8)],
     ])
       root.add(strut(a, b, 0.025, dark));
+
+    // ---------- Access panel (the +Z side of the bus) and its screws ----------
+    const hatch = new THREE.Mesh(B(bw, 2 * BY, BT), goldMLI);
+    hatch.position.set(bcx, 0, BZ - BT / 2);
+    addPart(root, hatch, {
+      id: 'busPanel',
+      name: 'Pannello di accesso',
+      base:
+        'Una parete della sonda che si può svitare e togliere per raggiungere serbatoio, valvole ed elettronica. È ricoperta da una “coperta” dorata a più strati, che la protegge dal caldo e dal freddo dello spazio.',
+      expert:
+        'Pannello strutturale a sandwich (pelli in alluminio o fibra di carbonio su nido d’ape di alluminio) rivestito di MLI (Multi-Layer Insulation): decine di fogli sottilissimi di Kapton o Mylar alluminato, separati da reticelle, che riducono lo scambio di calore per irraggiamento. ' +
+        'Le viti si avvitano in inserti filettati incollati nel nido d’ape.',
+      explode: [0, 0, 0.8],
+    });
+    const hatchPts = [];
+    for (const sy of [-1, 1]) {
+      for (let i = 0; i < 4; i++) hatchPts.push([V(x0 + 0.14 + (i * (bw - 0.28)) / 3, sy * (BY - 0.11), BZ + 0.008), V(0, 0, 1)]);
+      for (const x of [x0 + 0.14, x1 - 0.14]) hatchPts.push([V(x, sy * 0.3, BZ + 0.008), V(0, 0, 1)]);
+    }
+    addPart(root, fasteners(screw(0.07, 0.026), screwMat, hatchPts), {
+      id: 'panelScrews',
+      name: 'Viti del pannello di accesso',
+      base:
+        'Le viti che fissano il pannello alla struttura della sonda. Su un satellite ogni vite è “frenata”, perché le vibrazioni del lancio non la allentino.',
+      expert:
+        'Viti in titanio o acciaio inossidabile con filetto autofrenante, serrate a coppia controllata e registrata. ' +
+        'In camera pulita ogni vite tolta viene contata e messa da parte: un oggetto dimenticato a bordo, in assenza di peso, può finire ovunque.',
+      explode: [0, 0, 1.1],
+    });
 
     // ---------- Xenon tank ----------
     const tank = new THREE.Group();
@@ -501,6 +628,25 @@ export default {
       expert:
         'Lo XFC (Xenon Flow Controller) abbassa la pressione da ~100 bar a pochi bar con regolatori meccanici o elettronici e fissa le portate con restrizioni a flusso termico controllato. ' +
         'Prima del propulsore un isolatore ceramico interrompe elettricamente la linea: la camera si trova a +1800 V rispetto alla sonda.',
+      explode: [0, 0.35, -0.25],
+    });
+    // Union nuts where the lines join tank, thruster and cathodes; each backs off along its line (+Y).
+    const unionAt = (c, t, flip) => [c.getPointAt(t), flip ? c.getTangentAt(t).negate() : c.getTangentAt(t)];
+    const unions = fasteners(new THREE.CylinderGeometry(0.032, 0.032, 0.07, 6), MAT.brass(), [
+      unionAt(cFeed, 0.03, false), // tank outlet
+      unionAt(cFeed, 0.835, true), // main line, before the isolator
+      unionAt(cCath, 0.93, true), // discharge cathode
+      unionAt(cNeut, 0.97, true), // neutralizer
+    ]);
+    addPart(root, unions, {
+      id: 'feedUnions',
+      name: 'Raccordi delle linee di xeno',
+      base:
+        'Piccoli dadi che uniscono i tubicini dello xeno al serbatoio, al motore e ai due catodi. Devono essere a tenuta perfetta: nello spazio anche una perdita minuscola, in anni di missione, svuoterebbe il serbatoio.',
+      expert:
+        'Raccordi a tenuta metallo su metallo, senza gomme che nel vuoto rilascerebbero gas; sui sistemi di volo molte giunzioni sono direttamente saldate. ' +
+        'La tenuta si verifica con un rivelatore di fughe a elio: sono ammesse perdite dell’ordine del milionesimo di cm³ standard al secondo. ' +
+        'Una linea aperta va tappata subito: i catodi cavi temono ossigeno e umidità.',
       explode: [0, 0.35, -0.25],
     });
 
@@ -568,7 +714,8 @@ export default {
     const chamber = new THREE.Group();
     const wallPts = [[0.095, Y_BACK], [R_BACK, Y_BACK], [R_CH, Y_CONE], [R_CH, Y_FRONT]];
     chamber.add(new THREE.Mesh(shell(wallPts, -0.015), wallMat));
-    const housePts = [[0.1, Y_BACK - 0.1], [0.38, Y_BACK - 0.1], [R_CH + 0.11, Y_CONE - 0.06], [R_CH + 0.11, Y_FRONT + 0.04]];
+    // Rear shell of the plasma screen: stays with the chamber (it carries the mounting ring).
+    const housePts = [[0.1, Y_BACK - 0.1], [0.38, Y_BACK - 0.1], [R_CH + 0.11, Y_CONE - 0.06], [R_CH + 0.11, Y_CONE]];
     chamber.add(new THREE.Mesh(shell(housePts, -0.012), housingMat));
     // propellant distributor ring at the back
     chamber.add(ring(0.42, 0.02, -0.66, cut(MAT.steel())));
@@ -585,6 +732,37 @@ export default {
       expert:
         'Camera cilindro-conica che funge da anodo della scarica (~25 V); l’alimentazione principale entra da un anello distributore sul fondo. ' +
         'Il rendimento di utilizzo del propellente (frazione di xeno che esce ionizzata) supera il 90%. Attorno, uno schermo forato (plasma screen) a potenziale della sonda evita scariche verso l’esterno.',
+      explode: [0, -0.15, -1.2],
+    });
+
+    // ---------- Plasma screen: front sleeve over the rear shell, held by a ring of radial screws ----------
+    const screenSleeve = new THREE.Group();
+    screenSleeve.add(new THREE.Mesh(shell([[R_SCR, Y_CONE - 0.04], [R_SCR, Y_FRONT + 0.04]], -0.012), housingMat));
+    for (const y of [Y_CONE - 0.035, Y_FRONT + 0.035]) screenSleeve.add(ring(R_SCR + 0.012, 0.007, y, ringMat, 72));
+    addPart(thr, screenSleeve, {
+      id: 'plasmaScreen',
+      name: 'Schermo di plasma',
+      base:
+        'Una lamiera forata che avvolge la camera come una gabbia, senza toccarla. La camera lavora a più di mille volt: lo schermo, collegato alla sonda, tiene lontani gli elettroni che vagano lì attorno e che altrimenti ne sarebbero attirati.',
+      expert:
+        'Involucro in lamiera forata al potenziale della sonda (massa), distanziato dall’anodo che si trova al potenziale di fascio (fino a ~+1800 V). ' +
+        'Impedisce agli elettroni del plasma esterno e del neutralizzatore di essere raccolti dalle superfici ad alta tensione: sarebbe una corrente parassita, che la PPU fornirebbe senza produrre spinta. I fori lasciano sfogare il gas dall’intercapedine.',
+      explode: [0, -0.15, -1.2],
+    });
+    const sleevePts = [];
+    for (let i = 0; i < 12; i++) {
+      const a = ((i + 0.5) / 12) * Math.PI * 2;
+      const d = V(Math.cos(a), 0, Math.sin(a));
+      sleevePts.push([d.clone().multiplyScalar(R_SCR + 0.019).setY(Y_CONE - 0.02), d]);
+    }
+    addPart(thr, fasteners(screw(0.04, 0.022, 0.014), screwMat, sleevePts), {
+      id: 'screenScrews',
+      name: 'Viti dello schermo',
+      base:
+        'Piccole viti disposte tutt’attorno, che fissano la lamiera forata al guscio posteriore del motore. Tolte quelle, lo schermo si sfila in avanti come un manicotto.',
+      expert:
+        'Viti radiali che uniscono i due tratti dello schermo e ne assicurano la continuità elettrica verso massa: una lamiera isolata si caricherebbe a un potenziale indefinito. ' +
+        'Come tutta la viteria vicina alla camera sono amagnetiche (titanio o acciaio inossidabile austenitico), per non deformare il campo a cuspidi.',
       explode: [0, -0.15, -1.2],
     });
 
@@ -667,19 +845,23 @@ export default {
       explode: [0, 0.2, 1.3],
     });
 
-    // ---------- Grids (screen + accel) ----------
+    // ---------- Ion optics: screen grid (inner), accel grid (outer) and their ring of screws ----------
+    const screenGrid = new THREE.Group();
+    screenGrid.add(new THREE.Mesh(gridCap(Y_SCREEN), moly));
+    screenGrid.add(new THREE.Mesh(shell([[R_RING, Y_FRONT - 0.01], [R_RING, Y_FRONT + 0.032]], 0.12), ringMat));
+    addPart(thr, screenGrid, {
+      id: 'screenGrid',
+      name: 'Griglia schermo (screen)',
+      base:
+        'La griglia interna, quella a contatto con il plasma. Ha fori un po’ più grandi e fa da “colino”: lascia passare gli ioni solo attraverso i buchi, allineati uno per uno con quelli della griglia esterna, che così non viene colpita in pieno.',
+      expert:
+        'Griglia a monte dell’ottica ionica, al potenziale della camera (fino a ~+1800 V rispetto alla sonda): sottile e molto “trasparente” (circa due terzi della superficie sono fori) per estrarre più ioni possibile. ' +
+        'Davanti a ogni foro la guaina del plasma si incurva e fa da lente: focalizza il beamlet attraverso il foro, più piccolo, della griglia accel. È bombata come l’altra, così le due si dilatano insieme e la distanza resta costante.',
+      explode: [0, 0.55, 0],
+    });
     const grids = new THREE.Group();
-    grids.add(new THREE.Mesh(gridCap(Y_SCREEN), moly), new THREE.Mesh(gridCap(Y_ACCEL), molyDark));
-    grids.add(new THREE.Mesh(shell([[A_GRID + 0.13, Y_FRONT - 0.01], [A_GRID + 0.13, Y_FRONT + 0.08]], 0.12), housingMat));
-    const gb = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.014, 0.014, 0.012, 6), cut(MAT.steel()), 36);
-    const gm = new THREE.Matrix4();
-    for (let i = 0; i < 36; i++) {
-      const a = ((i + 0.5) / 36) * Math.PI * 2;
-      gm.makeTranslation(Math.cos(a) * (A_GRID + 0.1), Y_FRONT + 0.086, Math.sin(a) * (A_GRID + 0.1));
-      gb.setMatrixAt(i, gm);
-    }
-    gb.computeBoundingSphere();
-    grids.add(gb);
+    grids.add(new THREE.Mesh(gridCap(Y_ACCEL), molyDark));
+    grids.add(new THREE.Mesh(shell([[R_RING, Y_FRONT + 0.044], [R_RING, Y_FRONT + 0.08]], 0.12), ringMat));
     for (let i = 0; i < 12; i++) {
       const a = (i / 12) * Math.PI * 2;
       const b = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.1, 8), ceramicCut);
@@ -688,18 +870,34 @@ export default {
     }
     addPart(thr, grids, {
       id: 'grids',
-      name: 'Griglie di accelerazione',
+      name: 'Griglia acceleratrice (accel)',
       base:
-        'Due dischi sottili, uno davanti all’altro a meno di un millimetro, bucherellati con migliaia di forellini allineati. Tra di loro c’è una tensione di più di mille volt: gli ioni che arrivano a un buco vengono sparati fuori come proiettili. ' +
+        'La griglia esterna, quella che vedi da fuori: un disco bombato con migliaia di forellini, a meno di un millimetro dalla griglia schermo che le sta dietro. Tra le due c’è una tensione di più di mille volt: gli ioni che arrivano a un buco vengono sparati fuori come proiettili. ' +
         'Ogni forellino produce un sottilissimo getto; tutti insieme formano il fascio blu-violetto.',
       expert:
-        'Sistema ottico a due griglie in molibdeno (alcune versioni in carbonio-carbonio o grafite pirolitica), bombate e con migliaia di aperture allineate (screen più grandi e sottili, accel più piccole e spesse). ' +
-        'Distanza tra le griglie ~0,5–1 mm; tensione totale ~1,1–2 kV. L’usura per erosione da scambio di carica (ioni lenti che colpiscono la griglia accel) è il principale limite di vita: NEXT ha superato 50.000 ore di prova a terra.',
+        'Griglia a valle dell’ottica ionica a due griglie, in molibdeno (alcune versioni in carbonio-carbonio o grafite pirolitica), tenuta a ~−200 V: accelera gli ioni e impedisce agli elettroni del fascio di risalire verso la camera (backstreaming). Ha fori più piccoli e spessore maggiore della screen. ' +
+        'Distanza tra le griglie ~0,5–1 mm; tensione totale ~1,1–2 kV. L’usura per erosione da scambio di carica (ioni lenti che la colpiscono) è il principale limite di vita: NEXT ha superato 50.000 ore di prova a terra.',
       explode: [0, 0.9, 0],
     });
-    // Aperture discs: their own (non-highlighted) material so they can glow with the beamlets.
-    const holeMat = cut(new THREE.MeshStandardMaterial({ color: 0x07070b, emissive: 0x8a7cff, emissiveIntensity: 0.5, roughness: 0.6 }));
-    grids.add(apertures(Y_ACCEL, 0.019, 0.07, holeMat), apertures(Y_SCREEN, 0.026, 0.07, holeMat));
+    const gridPts = [];
+    for (let i = 0; i < 24; i++) {
+      const a = ((i + 0.5) / 24) * Math.PI * 2;
+      gridPts.push([V(Math.cos(a) * (A_GRID + 0.1), Y_FRONT + 0.088, Math.sin(a) * (A_GRID + 0.1)), V(0, 1, 0)]);
+    }
+    addPart(thr, fasteners(screw(0.09), screwMat, gridPts), {
+      id: 'gridScrews',
+      name: 'Viti delle griglie',
+      base:
+        'La corona di viti che stringe le due griglie, una sopra l’altra, al bordo della camera. Devono tenerle perfettamente allineate: i fori di una devono restare centrati su quelli dell’altra.',
+      expert:
+        'Le griglie sono montate su anelli di irrigidimento separati da isolatori ceramici (allumina), che reggono la differenza di tensione tra le due (fino a ~2 kV). ' +
+        'Il fissaggio deve lasciar dilatare gli anelli a caldo senza cambiare distanza e allineamento dei fori: basta uno scostamento di pochi centesimi di millimetro per deviare i beamlet contro la griglia accel.',
+      explode: [0, 1.2, 0],
+    });
+    // Aperture discs: their own (non-highlighted) materials so they can glow with the beamlets.
+    const holeMats = [0, 1].map(() => cut(new THREE.MeshStandardMaterial({ color: 0x07070b, emissive: 0x8a7cff, emissiveIntensity: 0.5, roughness: 0.6 })));
+    grids.add(apertures(Y_ACCEL, 0.019, 0.07, holeMats[0]));
+    screenGrid.add(apertures(Y_SCREEN, 0.026, 0.07, holeMats[1]));
 
     // ---------- Neutralizer ----------
     const neutPart = new THREE.Group();
@@ -709,7 +907,10 @@ export default {
     neut.add(new THREE.Mesh(lathe([[0, 0], [0.04, 0], [0.04, 0.24], [0.058, 0.24], [0.058, 0.3], [0.014, 0.315], [0, 0.315]], 24), MAT.paint(0x8f9399, 0.4)));
     for (let i = 0; i < 3; i++) neut.add(ring(0.045, 0.007, 0.05 + i * 0.03, copper, 16));
     neutPart.add(neut);
-    neutPart.add(strut(V(-(A_GRID + 0.13), Y_FRONT + 0.03, 0), V(NEUT[0] + 0.02, NEUT[1] + 0.05, 0), 0.018, dark));
+    // bracket: a foot on the plasma screen and a strut up to the cathode body
+    const foot = new THREE.Mesh(new RoundedBoxGeometry(0.03, 0.12, 0.1, 1, 0.008), dark);
+    foot.position.set(-(R_SCR + 0.026), 0.2, 0);
+    neutPart.add(foot, strut(V(-(R_SCR + 0.03), 0.22, 0), V(NEUT[0] + 0.02, NEUT[1] + 0.05, 0), 0.018, dark));
     addPart(thr, neutPart, {
       id: 'neutralizer',
       name: 'Neutralizzatore',
@@ -855,7 +1056,7 @@ export default {
         plasmaMat.opacity = (0.04 + 0.08 * k) * fl;
         cathGlowMat.emissiveIntensity = (1.2 + 1.2 * k) * fl;
         neutGlowMat.emissiveIntensity = (1.6 + 1.6 * k) * fl;
-        holeMat.emissiveIntensity = (0.25 + 0.9 * k) * fl;
+        for (const m of holeMats) m.emissiveIntensity = (0.25 + 0.9 * k) * fl;
         outerBeamMat.opacity = (0.06 + 0.16 * k) * fl;
         coreBeamMat.opacity = (0.07 + 0.2 * k) * fl;
         beamLight.intensity = (0.4 + 1.4 * k) * fl;

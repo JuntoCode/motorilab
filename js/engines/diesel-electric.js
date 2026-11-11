@@ -3,6 +3,7 @@
 // wheelsets of one bogie on a scrolling track. Roof resistor grids for dynamic braking.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MAT, cut, lathe, pipe, flow, ringX, clamp, smooth } from '../core/helpers.js';
 
 const TAU = Math.PI * 2;
@@ -71,6 +72,9 @@ const mesh = (g, m, x = 0, y = 0, z = 0) => {
 
 // Rows of hex bolt heads as one InstancedMesh (axis: 'x' | 'y' | 'z').
 const HEX = new THREE.CylinderGeometry(0.02, 0.02, 0.018, 6);
+// Hex head + shank of length `len` below it (local -Y), so a bolt backing out shows its shank.
+const screw = (len, r = 0.024, h = 0.02) =>
+  mergeGeometries([new THREE.CylinderGeometry(r, r, h, 6), new THREE.CylinderGeometry(r * 0.62, r * 0.62, len, 8).translate(0, -h / 2 - len / 2, 0)]);
 function bolts(mat, pts, axis = 'y', geo = HEX) {
   const m = new THREE.InstancedMesh(geo, mat, pts.length);
   const q = new THREE.Quaternion();
@@ -351,6 +355,110 @@ export default {
         'Il diesel trasforma in lavoro ~40% dell’energia del gasolio; generatore, elettronica e motori perdono un altro 10–15%. Al cerchione arriva circa il 35%.',
     },
   ],
+  // Officina (see CONTRACT.md): a depot overhaul where the big units are craned out one at a time.
+  // Simplified and educational, not a maintenance manual. Track, wheelsets, bogie, underframe and tank stay.
+  disassembly: {
+    intro: 'Smontiamo la locomotiva come in una grande revisione in deposito: i gruppi principali si scollegano e si tolgono uno alla volta con il carroponte.',
+    note: 'Sequenza semplificata a scopo didattico: in deposito ogni operazione segue i manuali del costruttore e le norme di sicurezza ferroviarie, con attrezzature di sollevamento dedicate.',
+    parts: {
+      cables: { dir: [0, 0.5, 1], dist: 0.9 },
+      brakeResistors: { dir: [0, 1, 0], dist: 0.9 },
+      cabinetBolts: { after: ['cables'], motion: 'unscrew', turns: 6, out: 0.14, dir: [0, 1, 0], dist: 0.3 },
+      powerElectronics: { after: ['cabinetBolts', 'brakeResistors', 'cables'], dir: [0, 1, 0], dist: 1.5, duration: 1.2 },
+      engineTurbo: { dir: [-0.3, 1, 0], dist: 1.3 },
+      alternatorBolts: { after: ['cables'], motion: 'unscrew', turns: 6, out: 0.1, dir: [1, 0, 0], dist: 0.2 },
+      alternatorStator: { after: ['alternatorBolts', 'cables', 'powerElectronics'], dir: [1, 0, 0], dist: 1.5, duration: 1.3 },
+      couplingBolts: { after: ['alternatorStator'], motion: 'unscrew', turns: 5, out: 0.05, dir: [0, 0, 1], dist: 0.35 },
+      alternatorRotor: { after: ['couplingBolts', 'alternatorStator'], dir: [1, 0, 0], dist: 1.4, duration: 1.2 },
+      engineMountBolts: { motion: 'unscrew', turns: 6, out: 0.16, dir: [0, 1, 0], dist: 0.3 },
+      primeMover: {
+        after: ['engineMountBolts', 'engineTurbo', 'alternatorRotor'],
+        with: ['engineCrank', 'enginePistons'],
+        dir: [0, 1, 0],
+        dist: 1.6,
+        duration: 1.4,
+      },
+      engineCrank: { after: ['primeMover'] },
+      enginePistons: { after: ['primeMover'] },
+      gears: { dir: [0, -1, 0], dist: 0.35 },
+      tractionMotors: { after: ['cables', 'gears'], with: ['motorRotors'], dir: [0, -1, 0], dist: 0.4 },
+      motorRotors: { after: ['tractionMotors'] },
+    },
+    steps: [
+      {
+        id: 'cables',
+        name: 'Scollega i cavi di potenza',
+        base: 'Per prima cosa si toglie tensione e si staccano i grossi cavi che uniscono alternatore, armadio e motori: finché sono collegati, nessun gruppo può essere spostato.',
+        expert:
+          'La macchina viene messa in sicurezza: diesel fermo, batterie sezionate e condensatori del circuito intermedio scaricati, perché restano carichi anche a motore spento. Solo allora si scollegano i capicorda, contrassegnando le fasi per il rimontaggio.',
+        parts: ['cables'],
+      },
+      {
+        id: 'resistors',
+        name: 'Togli i reostati dal tetto',
+        base: 'Le griglie di frenatura e il loro ventilatore stanno in cima all’armadio: si sollevano per prime, dall’alto.',
+        expert:
+          'Il gruppo reostatico è un modulo a sé, con griglie e ventilatore sullo stesso telaio. Nelle locomotive vere il tetto ha pannelli smontabili proprio per estrarre i gruppi dall’alto con il carroponte.',
+        parts: ['brakeResistors'],
+      },
+      {
+        id: 'cabinet',
+        name: 'Solleva l’armadio di potenza',
+        base: 'Svitati i bulloni alla base, l’armadio con raddrizzatore e inverter si solleva tutto intero.',
+        expert:
+          'L’armadio è un modulo unico imbullonato al telaio: oltre ai cavi di potenza si staccano i connettori di comando e, se il raffreddamento è a liquido, le tubazioni. I guasti si riparano poi al banco, sostituendo i singoli moduli.',
+        parts: ['cabinetBolts', 'powerElectronics'],
+      },
+      {
+        id: 'turbo',
+        name: 'Togli turbo e collettori',
+        base: 'Il turbocompressore, con i collettori di aspirazione e scarico e il camino, si stacca dalle testate e si solleva.',
+        expert:
+          'Si separano le flange dei collettori dalle testate e i tubi dell’olio che lubrifica e raffredda l’alberino del turbo. Il turbo si revisiona a parte: gira a ben oltre diecimila giri al minuto e va equilibrato con cura.',
+        parts: ['engineTurbo'],
+      },
+      {
+        id: 'stator',
+        name: 'Sfila lo statore dell’alternatore',
+        base: 'Si svitano i bulloni della flangia che unisce l’alternatore al diesel e si sfila la carcassa con lo statore, facendola scorrere lungo l’asse.',
+        expert:
+          'In molti alternatori di trazione il rotore ha un solo cuscinetto, dal lato opposto al diesel: l’altra estremità è sostenuta dall’albero motore. Per questo, tolto lo statore, il rotore va sorretto finché non lo si stacca dal giunto. In deposito di solito l’alternatore esce in un pezzo solo; qui lo dividiamo per vedere com’è fatto.',
+        parts: ['alternatorBolts', 'alternatorStator'],
+      },
+      {
+        id: 'rotor',
+        name: 'Stacca il rotore dal giunto',
+        base: 'Il rotore è imbullonato al disco in fondo all’albero motore: tolti i bulloni, si sfila anche lui.',
+        expert:
+          'Il giunto trasmette tutta la coppia del diesel, senza frizione né riduttore: rotore e albero motore girano sempre insieme. Al rimontaggio contano l’allineamento dei due alberi e un traferro uniforme tra rotore e statore, che è di pochi millimetri.',
+        parts: ['couplingBolts', 'alternatorRotor'],
+      },
+      {
+        id: 'engine',
+        name: 'Solleva il motore diesel',
+        base: 'Svitati i bulloni dei supporti, il carroponte solleva il diesel intero, con albero motore, bielle e pistoni dentro.',
+        expert:
+          'Il motore primo pesa da una decina a oltre venti tonnellate. Prima di sollevarlo si scollegano anche gasolio, acqua di raffreddamento, olio e comandi. In officina viene poi smontato a parte: in molti motori ferroviari testata, pistone e canna si sostituiscono un cilindro alla volta.',
+        parts: ['engineMountBolts', 'primeMover'],
+      },
+      {
+        id: 'gears',
+        name: 'Togli i carter degli ingranaggi',
+        base: 'Giù nel carrello: si toglie la scatola che protegge gli ingranaggi tra motore e asse e tiene dentro il lubrificante.',
+        expert:
+          'Il carter è in due metà imbullonate attorno a pignone e corona. Nella realtà la corona è calettata sull’asse e il pignone sull’albero del motore, e restano lì; in questo modello semplificato escono insieme al carter.',
+        parts: ['gears'],
+      },
+      {
+        id: 'motors',
+        name: 'Cala i motori di trazione',
+        base: 'I motori si calano verso il basso, tra le rotaie, con il rotore dentro: in deposito lo si fa sopra una fossa.',
+        expert:
+          'Un motore sospeso per il naso poggia da un lato sull’asse, con due supporti, e dall’altro sulla traversa del carrello. In deposito lo si cala nella fossa con un calaassi (una piattaforma che si abbassa), di solito insieme alla sua sala montata; qui gli assi restano al loro posto per semplicità.',
+        parts: ['tractionMotors'],
+      },
+    ],
+  },
   camera: { position: [-2.6, 2.6, 7.8], target: [0, 0.2, 0] },
 
   build(ctx) {
@@ -747,6 +855,18 @@ export default {
     doors.add(rbox(ex1 - ex0 - 0.1, 0.12, 0.08, 0.03, blockMat, (ex0 + ex1) / 2, 2.3, -0.36));
     for (const x of CYL_X) doors.add(rod([x - 0.06, 2.36, -0.37], [x - 0.06, HEAD_Y + 0.1, -0.32], 0.01, MAT.steel(), 6));
     engine.add(cutAll(doors));
+    // flywheel housing plate: the alternator's drive-end adapter bolts onto it
+    engine.add(mesh(alongX(pipe(0.595, 0.31, 0.035, 64)), blockMat, ex1 - 0.0025, CY, 0));
+    const mountBolts = [];
+    for (const x of [ex0 + 0.12, ex1 - 0.15]) for (const dx of [-0.06, 0.06]) for (const sz of [-1, 1]) mountBolts.push([x + dx, DECK_Y + 0.1325, sz * 0.46]);
+    add(bolts(eBolt, mountBolts, 'y', screw(0.2, 0.028, 0.025)), {
+      id: 'engineMountBolts',
+      name: 'Bulloni dei supporti del motore',
+      base: 'Tengono i piedi del motore diesel fissati al telaio della locomotiva.',
+      expert:
+        'Il motore primo poggia sul telaio in pochi punti; spesso tra piede e telaio ci sono supporti elastici che filtrano le vibrazioni, e spessori che servono ad allineare il gruppo motore-alternatore.',
+      explode: [0, 0.7, 0],
+    });
     add(engine, {
       id: 'primeMover',
       name: 'Motore diesel (motore primo)',
@@ -787,6 +907,19 @@ export default {
     coupling.position.x = -0.37;
     const couplingMark = box(0.07, 0.14, 0.05, MAT.paint(0xff7a1a), -0.37, 0.2, 0);
     crank.add(coupling, couplingMark);
+    // coupling bolts (rotor to coupling disc): their own part, turning with the crank
+    const couplingSpin = new THREE.Group();
+    couplingSpin.position.set(0, CY, 0);
+    const couplingPts = Array.from({ length: 8 }, (_, i) => [-0.33, Math.cos(((i + 0.5) / 8) * TAU) * 0.23, Math.sin(((i + 0.5) / 8) * TAU) * 0.23]);
+    couplingSpin.add(bolts(MAT.steel(), couplingPts, 'x', screw(0.06, 0.022, 0.02)));
+    add(new THREE.Group().add(couplingSpin), {
+      id: 'couplingBolts',
+      name: 'Bulloni del giunto',
+      base: 'Fissano il rotore dell’alternatore al disco in fondo all’albero motore: tutta la potenza del diesel passa da qui.',
+      expert:
+        'Bulloni disposti in cerchio sul giunto: trasmettono al rotore tutta la coppia del diesel. Nei giunti a flangia la coppia passa per attrito tra le facce serrate e, con bulloni calibrati, anche a taglio.',
+      explode: [0, -0.15, 1.1],
+    });
     add(crankGroup, {
       id: 'engineCrank',
       name: 'Albero motore e giunto',
@@ -900,7 +1033,18 @@ export default {
       alt.add(bell);
     }
     for (const x of [AL0 + 0.15, AL1 - 0.15]) alt.add(box(0.14, CY - 0.45 - DECK_Y, 1.0, altMat, x, (CY - 0.45 + DECK_Y) / 2, 0)); // feet
-    alt.add(bolts(cut(MAT.steel()), [...boltCircle(AL0 - 0.025, CY, 0, 0.5, 16), ...boltCircle(AL1 + 0.025, CY, 0, 0.5, 16)], 'x'));
+    alt.add(bolts(cut(MAT.steel()), boltCircle(AL1 + 0.025, CY, 0, 0.5, 16), 'x'));
+    // drive-end adapter with its flange: encloses the coupling and bolts to the engine's flywheel housing
+    alt.add(mesh(alongX(pipe(0.53, 0.5, 0.06, 64)), altMat, AL0 - 0.05, CY, 0));
+    alt.add(mesh(alongX(pipe(0.595, 0.5, 0.025, 64)), altMat, AL0 - 0.0925, CY, 0));
+    add(bolts(cut(MAT.steel()), boltCircle(AL0 - 0.066, CY, 0, 0.563, 12), 'x', screw(0.07, 0.026, 0.028)), {
+      id: 'alternatorBolts',
+      name: 'Bulloni della flangia dell’alternatore',
+      base: 'Una corona di bulloni unisce la carcassa dell’alternatore al diesel: così i due formano un blocco unico e i loro alberi restano allineati.',
+      expert:
+        'La flangia della carcassa si centra sulla campana del volano del diesel: l’accoppiamento rigido delle due carcasse garantisce l’allineamento degli alberi e un traferro costante, indispensabile quando il rotore ha un solo cuscinetto.',
+      explode: [0, 1.0, 0],
+    });
     const vents = new THREE.Group();
     for (let i = 0; i < 7; i++) {
       const a = ((i - 3) / 16) * Math.PI;
@@ -1061,6 +1205,20 @@ export default {
     cab.add(box(1.25, 0.03, 0.02, busMat, 1.75, 2.2, -0.2), box(1.25, 0.03, 0.02, busMat, 1.75, 1.3, -0.2));
     cab.add(box(0.03, 0.9, 0.02, busMat, 1.55, 1.75, -0.2), box(0.03, 0.9, 0.02, busMat, 1.92, 1.75, -0.2));
     cab.add(box(0.26, 0.2, 0.08, darkMod, 2.3, 1.42, -0.3)); // control unit
+    // mounting flanges along the base, bolted to the deck
+    const cabBolts = [];
+    for (const z of [CB.z0 - 0.04, CB.z1 + 0.04]) {
+      cab.add(box(cw, 0.03, 0.08, cabMat, ccx, CB.y0 + 0.015, z));
+      for (let k = 0; k < 4; k++) cabBolts.push([CB.x0 + 0.12 + (k * (cw - 0.24)) / 3, CB.y0 + 0.04, z + Math.sign(z) * 0.008]);
+    }
+    add(bolts(cut(MAT.steel()), cabBolts, 'y', screw(0.14)), {
+      id: 'cabinetBolts',
+      name: 'Bulloni dell’armadio di potenza',
+      base: 'I bulloni che fissano la base dell’armadio elettronico al telaio della locomotiva.',
+      expert:
+        'L’armadio è un modulo sostituibile: fissato al telaio con pochi bulloni lungo la base, si estrae intero dall’alto. I fissaggi devono reggere urti e vibrazioni di marcia senza allentarsi.',
+      explode: [0.35, 0.25, 0.8],
+    });
     add(cab, {
       id: 'powerElectronics',
       name: 'Armadio di potenza (raddrizzatore e inverter)',
@@ -1197,6 +1355,7 @@ export default {
         // Diesel: crank, pistons, rods, alternator rotor (direct coupling).
         const theta1 = state.cycle * Math.PI * 4;
         crank.rotation.x = theta1;
+        couplingSpin.rotation.x = theta1;
         altRotor.rotation.x = theta1;
         CYL_X.forEach((x, k) => {
           const local = wrap(state.cycle - FIRE[k]);
@@ -1258,7 +1417,8 @@ export default {
         // Electrical glow: excitation, diodes, IGBT PWM, motor bars, cables; grids when braking.
         // (write to mesh.material: ctx.part cloned the materials)
         const load = thr;
-        fieldCoils.forEach((m) => (m.material.emissiveIntensity = 0.15 + 0.9 * load));
+        // (no excitation glow once the machine is taken apart: the bare rotor would bloom to white)
+        fieldCoils.forEach((m) => (m.material.emissiveIntensity = assembled ? 0.15 + 0.9 * load : 0.1));
         const pwm = Math.sin(time * 70) > -0.3 ? 1 : 0.35;
         diodes.forEach((d, i) => (d.material.emissiveIntensity = load * 1.2 * Math.max(0, Math.cos(theta1 * 5 - (i * TAU) / 6))));
         igbt.forEach((leg, k) => {

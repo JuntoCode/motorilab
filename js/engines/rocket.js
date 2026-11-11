@@ -2,6 +2,7 @@
 // state.cycle only drives the turbopump rotor angle; everything else follows throttle and time.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MAT, cut, lathe, pipe, flow, clamp, lerp, smooth } from '../core/helpers.js';
 
 // ---------- Stations (model space, nozzle points down -Y) ----------
@@ -24,6 +25,11 @@ const DOME_H = 0.4;
 const RP_APEX = 1.36; // RP-1 tank bottom dome apex
 const LOX_APEX = 1.9; // LOX tank bottom dome (common bulkhead) apex
 const TANK_TOP = 2.42;
+const Y_LOX_OUT = 1.385; // LOX downcomer outlet flange, under the RP-1 dome
+const Y_FUEL_OUT = 1.49; // RP-1 tank outlet flange
+const MOUNT_A = -0.25; // turbopump mount azimuth on the chamber barrel (just behind the cut plane)
+const MOUNT_Y = [0.53, 0.67]; // mount heights, between the barrel stiffening rings
+const R_FOOT = R_C + LINER + GAP + JACKET + 0.018; // chamber pad outer face = strut foot inner face
 const ROTOR_TURNS = 4; // visual rotor turns per cycle
 
 const thrustOf = (th) => 0.4 + 0.6 * clamp(th, 0, 1); // deep throttle 40% .. 100%
@@ -99,7 +105,8 @@ const _s = new THREE.Vector3(1, 1, 1);
 function instanced(geo, mat, items) {
   const im = new THREE.InstancedMesh(geo, mat, items.length);
   items.forEach((t, k) => {
-    _q.setFromEuler(_e.set(...(t.r || [0, 0, 0])));
+    if (t.q) _q.copy(t.q);
+    else _q.setFromEuler(_e.set(...(t.r || [0, 0, 0])));
     im.setMatrixAt(k, _m4.compose(_p.set(...t.p), _q, _s));
   });
   im.instanceMatrix.needsUpdate = true;
@@ -112,6 +119,37 @@ const circle = (r, y, n, x = 0, z = 0, a0 = 0) =>
     return { p: [x + Math.cos(a) * r, y, z + Math.sin(a) * r] };
   });
 const BOLT = new THREE.CylinderGeometry(0.0085, 0.0085, 0.009, 6).translate(0, 0.0045, 0);
+// Removable bolt (Officina): hex head from y = 0 up to h, shank below it. Local +Y points out of the hole.
+const screw = (r, h, len) =>
+  mergeGeometries([
+    new THREE.CylinderGeometry(r, r, h, 6).translate(0, h / 2, 0),
+    new THREE.CylinderGeometry(r * 0.55, r * 0.55, len, 8).translate(0, -len / 2, 0),
+  ]);
+// Bolt circle of radius R around centre c, the screws pointing along `axis` (unit vector).
+function boltRing(c, axis, R, n, a0 = 0) {
+  const q = new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), axis);
+  return Array.from({ length: n }, (_, k) => {
+    const a = a0 + (k / n) * Math.PI * 2;
+    return { p: V(Math.cos(a) * R, 0, Math.sin(a) * R).applyQuaternion(q).add(c).toArray(), q };
+  });
+}
+// Piece of a curve between arc fractions u0..u1 as its own curve (lines are split at their flanges).
+const subCurve = (curve, u0, u1, n = 20) =>
+  new THREE.CatmullRomCurve3(Array.from({ length: n + 1 }, (_, i) => curve.getPointAt(lerp(u0, u1, i / n))));
+// Arc fraction where a descending line crosses height y.
+function uAtY(curve, y) {
+  let a = 0;
+  let b = 1;
+  for (let i = 0; i < 20; i++) {
+    const m = (a + b) / 2;
+    if (curve.getPointAt(m).y > y) a = m;
+    else b = m;
+  }
+  return (a + b) / 2;
+}
+// Point on the turbopump mount: radius r, height y, tangential offset t.
+const mountPt = (r, y, t = 0) =>
+  V(Math.cos(MOUNT_A) * r - Math.sin(MOUNT_A) * t, y, Math.sin(MOUNT_A) * r + Math.cos(MOUNT_A) * t);
 
 // Flexible bellows on a line, at arc fraction u.
 function bellows(curve, u, r, mat) {
@@ -289,7 +327,7 @@ export default {
     {
       id: 'feed',
       name: 'Alimentazione dei propellenti',
-      parts: ['loxTank', 'rp1Tank', 'valves'],
+      parts: ['loxTank', 'rp1Tank', 'loxFeedLine', 'fuelFeedLine', 'valves'],
       base:
         'I serbatoi contengono ossigeno liquido e cherosene, leggermente in pressione grazie a un po’ di elio. ' +
         'I propellenti scendono lungo grossi tubi verso il motore e le valvole principali decidono quando e quanto ne passa, come rubinetti molto veloci.',
@@ -336,7 +374,7 @@ export default {
     {
       id: 'thrust',
       name: 'Espansione nell’ugello e spinta',
-      parts: ['nozzle', 'gimbal'],
+      parts: ['nozzle', 'nozzleExtension', 'gimbal'],
       base:
         'I gas caldi passano dalla gola, il punto più stretto, dove raggiungono la velocità del suono; poi si allargano nella campana e accelerano ancora, fino a circa 10.000 km/h. ' +
         'Lanciando indietro centinaia di kg di gas al secondo, il motore riceve una spinta uguale e contraria: è la terza legge di Newton. Gli attuatori inclinano il motore per guidare il razzo.',
@@ -408,6 +446,110 @@ export default {
     ],
     note: 'Valori indicativi. “Mare” = spinta al livello del mare, “vuoto” = nello spazio, dove lo stesso motore spinge di più.',
   },
+  // Officina (see CONTRACT.md): the engine comes off its stage piece by piece, from the bottom up, so what is
+  // left always hangs from the thrust structure. Tanks, thrust structure and gimbal joint stay as the base.
+  // Simplified and educational, not a real procedure.
+  disassembly: {
+    intro:
+      'Stacchiamo il motore dallo stadio pezzo per pezzo, dal basso verso l’alto: alla fine restano i serbatoi, la struttura di spinta e il giunto cardanico.',
+    note: 'Sequenza semplificata a scopo didattico: un motore vero si stacca dallo stadio tutto intero e si smonta al banco, seguendo le procedure del costruttore e, per le parti a contatto con l’ossigeno, in ambiente pulito.',
+    parts: {
+      exhaustDuct: { dir: [1, -0.15, 0.25], dist: 0.9 },
+      nozzleBolts: { motion: 'unscrew', turns: 6, out: 0.07, dir: [0.3, 0.5, 1], dist: 0.35 },
+      nozzleExtension: { after: ['nozzleBolts', 'exhaustDuct'], dir: [0, -1, 0], dist: 1.0, duration: 1.1 },
+      feedBolts: { motion: 'unscrew', turns: 5, out: 0.06, dir: [1, 0.2, 0.4], dist: 0.3 },
+      loxFeedLine: { after: ['feedBolts'], dir: [1, 0.1, 0.5], dist: 0.8 },
+      fuelFeedLine: { after: ['feedBolts'], dir: [1, 0.1, -0.5], dist: 0.8 },
+      gasGenerator: { dir: [1, 0.15, -0.3], dist: 0.8 },
+      valves: { dir: [0.1, 0.5, 1], dist: 0.8 },
+      pumpBolts: { after: ['valves'], motion: 'unscrew', turns: 5, out: 0.06, dir: [0.2, 0.5, 1], dist: 0.3 },
+      turbopump: {
+        after: ['pumpBolts', 'valves', 'loxFeedLine', 'fuelFeedLine', 'gasGenerator', 'exhaustDuct'],
+        dir: [1, 0.1, 0.15],
+        dist: 1.0,
+        duration: 1.1,
+      },
+      gimbal: { dir: [-1, 0, -0.3], dist: 0.8 },
+      injectorBolts: {
+        after: ['turbopump', 'valves', 'gimbal', 'nozzleExtension'],
+        motion: 'unscrew',
+        turns: 6,
+        out: 0.07,
+        dir: [0.3, 0.5, 1],
+        dist: 0.35,
+      },
+      chamber: { after: ['injectorBolts'], with: ['nozzle'], dir: [0, -1, 0], dist: 1.1, duration: 1.2 },
+      nozzle: { after: ['chamber'], dir: [0, -1, 0], dist: 1.1 },
+      injector: { after: ['chamber'], dir: [0, -1, 0], dist: 0.7 },
+      gimbalJoint: { after: ['injector'], dir: [0, -1, 0], dist: 0.5 },
+    },
+    steps: [
+      {
+        id: 'duct',
+        name: 'Stacca lo scarico della turbina',
+        base: 'Si comincia dal tubo di scarico della turbina: si libera la flangia sotto la turbina, si apre la fascetta che lo tiene all’ugello e lo si sfila di lato.',
+        expert:
+          'Il condotto è flangiato alla cassa della turbina e sostenuto da un puntone sull’estensione dell’ugello: va tolto per primo perché lega tra loro due pezzi che devono uscire separati.',
+        parts: ['exhaustDuct'],
+      },
+      {
+        id: 'skirt',
+        name: 'Smonta l’estensione dell’ugello',
+        base: 'Si svita la corona di bulloni della flangia e si cala la parte bassa della campana.',
+        expert:
+          'L’estensione è il pezzo più ingombrante e anche il più delicato: una parete sottile che si ammacca facilmente. I bulloni si allentano a croce, un po’ alla volta, mentre la campana è sostenuta dal basso.',
+        parts: ['nozzleBolts', 'nozzleExtension'],
+      },
+      {
+        id: 'feed',
+        name: 'Scollega le linee dei serbatoi',
+        base: 'Si svitano le flange e si tolgono i due tubi che portano ossigeno e cherosene dai serbatoi alle pompe.',
+        expert:
+          'Si lavora a serbatoi vuoti e con le linee spurgate con gas inerte. Le aperture vengono subito tappate: nel circuito dell’ossigeno non devono entrare polvere, umidità o tracce di grasso.',
+        parts: ['feedBolts', 'loxFeedLine', 'fuelFeedLine'],
+      },
+      {
+        id: 'gg',
+        name: 'Togli il generatore di gas',
+        base: 'Si scollegano le due linee sottili che lo alimentano e il condotto che porta i gas caldi alla turbina, poi lo si sfila verso l’esterno.',
+        expert:
+          'Il generatore di gas è un piccolo combustore a sé, con il suo iniettore: si stacca dal collettore d’ingresso della turbina insieme alle linee di prelievo di LOX e RP-1 e alla valvola che ne regola la portata.',
+        parts: ['gasGenerator'],
+      },
+      {
+        id: 'pump',
+        name: 'Togli valvole e turbopompa',
+        base: 'Prima le valvole principali con le linee di mandata, che collegano le pompe alla camera; poi si svitano i supporti e la turbopompa esce di lato.',
+        expert:
+          'Le linee di mandata lavorano ad alta pressione (oltre 100 bar) e uniscono turbopompa, iniettore e collettore di raffreddamento: finché ci sono, la pompa non si muove. Tolti i bulloni dei piedini, la turbopompa si sfila intera e il rotore si controlla al banco.',
+        parts: ['valves', 'pumpBolts', 'turbopump'],
+      },
+      {
+        id: 'gimbal',
+        name: 'Sgancia gli attuatori',
+        base: 'Si sfilano i perni dei due attuatori e si scollegano i loro tubi idraulici: ora la camera è libera di essere calata.',
+        expert:
+          'Gli attuatori collegano la struttura di spinta alla camera. Tolti quelli, ciò che resta del motore è appeso solo al giunto cardanico e va sostenuto da un’attrezzatura, altrimenti penzolerebbe libero.',
+        parts: ['gimbal'],
+      },
+      {
+        id: 'chamber',
+        name: 'Cala la camera di spinta',
+        base: 'Si svitano i bulloni dell’iniettore e si cala la camera di combustione, che è un pezzo unico con la gola.',
+        expert:
+          'Camera, gola e primo tratto dell’ugello formano un solo pezzo con liner in rame, canali e camicia: si separa dall’iniettore sulla flangia superiore. Dentro si ispezionano la parete (erosione, cricche) e i canali di raffreddamento (depositi carboniosi).',
+        parts: ['injectorBolts', 'chamber'],
+      },
+      {
+        id: 'injector',
+        name: 'Togli l’iniettore',
+        base: 'Resta la testa dell’iniettore con la sua cupola: si stacca dal giunto cardanico e si cala. Appesi allo stadio restano solo il giunto e la struttura di spinta.',
+        expert:
+          'L’iniettore porta tutta la spinta: sulla sua cupola è fissato il giunto cardanico. Al banco si controllano lo spinotto (pintle) e i passaggi del combustibile: un passaggio parzialmente ostruito altera la miscela vicino alla parete e può surriscaldarla.',
+        parts: ['injector'],
+      },
+    ],
+  },
   thumb: { orbit: [-25, 10], zoom: 1.1, view: 'section' },
   camera: { position: [2.4, 0.3, 6.6], target: [0.25, -0.4, 0] },
 
@@ -422,6 +564,14 @@ export default {
     eng.updateMatrix();
     gimbal.add(eng);
     root.add(gimbal);
+    // Pump-side ends of the feed lines: they belong to parts of the static stage but ride with the engine.
+    const followers = [];
+    const follower = () => {
+      const g = new THREE.Group();
+      g.matrixAutoUpdate = false;
+      followers.push(g);
+      return g;
+    };
 
     const addPart = (parent, obj, info) => {
       const w = ctx.part(obj, info);
@@ -462,9 +612,13 @@ export default {
     loxFill.push([TANK_R * 0.99, 2.2], [0, 2.2]);
     loxTank.add(new THREE.Mesh(lathe(loxFill, 64), liquid(0x8fd4ff, 0.22)));
     const cLoxDown = crv(LOX_DOWN);
-    loxTank.add(tube(cLoxDown, 0.045, loxLine, 72));
+    const uLox = uAtY(cLoxDown, Y_LOX_OUT);
+    loxTank.add(tube(subCurve(cLoxDown, 0, uLox, 8), 0.045, loxLine, 24));
     loxTank.add(ring(0.06, 0.014, LOX_APEX + 0.054, steelCut, 0.5, 0)); // downcomer outlet flange
-    loxTank.add(bellows(cLoxDown, 0.93, 0.052, lineSteel));
+    // Outlet boss through the RP-1 dome: the feed line bolts on under it.
+    const loxBoss = new THREE.Mesh(pipe(0.086, 0.046, 0.07, 32), steelCut);
+    loxBoss.position.set(0.5, Y_LOX_OUT + 0.035, 0);
+    loxTank.add(loxBoss);
     addPart(root, loxTank, {
       id: 'loxTank',
       name: 'Serbatoio ossigeno liquido (LOX)',
@@ -485,16 +639,97 @@ export default {
     rpFill.push([TANK_R * 0.99, 1.7], [0, 1.7]);
     rpTank.add(new THREE.Mesh(lathe(rpFill, 64), liquid(0xd9982b, 0.22)));
     const cFuelFeed = crv(FUEL_FEED);
-    rpTank.add(tube(cFuelFeed, 0.04, lineSteel, 72));
-    rpTank.add(bellows(cFuelFeed, 0.9, 0.047, lineSteel));
+    const uFuel = uAtY(cFuelFeed, Y_FUEL_OUT);
+    rpTank.add(tube(subCurve(cFuelFeed, 0, uFuel, 6), 0.04, lineSteel, 12));
+    const fuelBoss = new THREE.Mesh(pipe(0.076, 0.041, 0.14, 32), alCut); // outlet boss on the dome
+    fuelBoss.position.set(0.8, Y_FUEL_OUT + 0.07, -0.3);
+    rpTank.add(fuelBoss);
     addPart(root, rpTank, {
       id: 'rp1Tank',
       name: 'Serbatoio RP-1 (cherosene)',
       base:
         'Contiene il combustibile: un cherosene molto raffinato, parente di quello degli aerei. Dal fondo parte il tubo che lo porta alla pompa. È più piccolo del serbatoio dell’ossigeno perché per bruciarlo serve più del doppio di ossigeno.',
       expert:
-        'RP-1: cherosene a tagli stretti, quasi privo di zolfo e aromatici, densità ~0,81 kg/L (il Falcon 9 lo raffredda per densificarlo). Rapporto di miscela O/F ≈ 2,36 in massa: per ogni kg di RP-1 servono ~2,4 kg di LOX. Il condotto di uscita ha un soffietto per seguire il gimbal.',
+        'RP-1: cherosene a tagli stretti, quasi privo di zolfo e aromatici, densità ~0,81 kg/L (il Falcon 9 lo raffredda per densificarlo). Rapporto di miscela O/F ≈ 2,36 in massa: per ogni kg di RP-1 servono ~2,4 kg di LOX. Sul fondo c’è l’uscita flangiata a cui si imbullona la linea di alimentazione della pompa.',
       explode: [0, 0.55, 0],
+    });
+
+    // ---------- Feed lines: tank outlets -> pump inlets, each with a bellows ----------
+    const FEED_EXPLODE = [0.6, 0.4, 0];
+    const loxFeed = new THREE.Group();
+    loxFeed.add(tube(subCurve(cLoxDown, uLox, 0.955, 28), 0.045, loxLine, 48));
+    loxFeed.add(bellows(cLoxDown, 0.93, 0.052, lineSteel));
+    const loxTopFl = new THREE.Mesh(pipe(0.086, 0.046, 0.014, 32), steelCut);
+    loxTopFl.position.set(0.5, Y_LOX_OUT - 0.007, 0);
+    loxFeed.add(loxTopFl);
+    // Below the bellows the line rides with the pump: a stub sliding inside the bellows, with its flange.
+    const loxEnd = follower();
+    loxEnd.add(tube(subCurve(cLoxDown, 0.9, 1, 8), 0.043, loxLine, 12));
+    const loxPumpFl = new THREE.Mesh(pipe(0.1, 0.044, 0.014, 32), steelCut);
+    loxPumpFl.position.set(TP_X, 0.907, 0);
+    loxEnd.add(loxPumpFl);
+    loxFeed.add(loxEnd);
+    addPart(root, loxFeed, {
+      id: 'loxFeedLine',
+      name: 'Linea di alimentazione LOX',
+      base:
+        'Il tubo che porta l’ossigeno liquido dall’uscita del serbatoio alla pompa. Il tratto a fisarmonica (soffietto) lo lascia piegare quando il motore si inclina per sterzare.',
+      expert:
+        'Condotto a bassa pressione (pochi bar) tra il downcomer e l’aspirazione della pompa LOX. Il soffietto metallico assorbe i movimenti del gimbal e le contrazioni termiche: a −183 °C l’acciaio si accorcia di circa 3 mm per metro. Prima dell’avvio la linea viene raffreddata (chilldown), perché alla pompa non deve arrivare ossigeno in ebollizione.',
+      explode: FEED_EXPLODE,
+    });
+
+    const fuelFeed = new THREE.Group();
+    fuelFeed.add(tube(subCurve(cFuelFeed, uFuel, 0.925, 28), 0.04, lineSteel, 48));
+    fuelFeed.add(bellows(cFuelFeed, 0.9, 0.047, lineSteel));
+    const fuelTopFl = new THREE.Mesh(pipe(0.076, 0.041, 0.014, 32), steelCut);
+    fuelTopFl.position.set(0.8, Y_FUEL_OUT - 0.007, -0.3);
+    fuelFeed.add(fuelTopFl);
+    const fuelTip = cFuelFeed.getPointAt(1);
+    const fuelAxis = cFuelFeed.getTangentAt(1).negate(); // out of the pump inlet, back along the line
+    const fuelQuat = new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), fuelAxis);
+    const fuelEnd = follower();
+    fuelEnd.add(tube(subCurve(cFuelFeed, 0.87, 1, 8), 0.038, lineSteel, 12));
+    const fuelPumpFl = new THREE.Mesh(pipe(0.07, 0.039, 0.014, 32), steelCut);
+    fuelPumpFl.position.copy(fuelTip).addScaledVector(fuelAxis, 0.007);
+    fuelPumpFl.quaternion.copy(fuelQuat);
+    fuelEnd.add(fuelPumpFl);
+    fuelFeed.add(fuelEnd);
+    addPart(root, fuelFeed, {
+      id: 'fuelFeedLine',
+      name: 'Linea di alimentazione RP-1',
+      base:
+        'Il tubo che porta il cherosene dal fondo del serbatoio alla pompa del combustibile. Anche qui un soffietto flessibile segue i movimenti del motore.',
+      expert:
+        'Condotto di aspirazione della pompa RP-1, a bassa pressione: il diametro generoso tiene bassa la velocità del liquido e limita le perdite di carico, lasciando alla pompa il margine di NPSH che evita la cavitazione. Il soffietto disaccoppia il motore, che oscilla sul gimbal, dallo stadio.',
+      explode: FEED_EXPLODE,
+    });
+
+    // Flange bolts of both lines (one part): heads down under the tank outlets, heads out at the pump inlets.
+    const feedScrew = screw(0.011, 0.01, 0.03);
+    const feedBolts = new THREE.Group();
+    feedBolts.add(
+      instanced(feedScrew, boltMat, [
+        ...boltRing(V(0.5, Y_LOX_OUT - 0.014, 0), V(0, -1, 0), 0.068, 8),
+        ...boltRing(V(0.8, Y_FUEL_OUT - 0.014, -0.3), V(0, -1, 0), 0.06, 8),
+      ])
+    );
+    const feedEndBolts = follower();
+    feedEndBolts.add(
+      instanced(feedScrew, boltMat, [
+        ...boltRing(V(TP_X, 0.914, 0), V(0, 1, 0), 0.08, 8),
+        ...boltRing(fuelTip.clone().addScaledVector(fuelAxis, 0.014), fuelAxis, 0.056, 6),
+      ])
+    );
+    feedBolts.add(feedEndBolts);
+    addPart(root, feedBolts, {
+      id: 'feedBolts',
+      name: 'Bulloni delle flange di alimentazione',
+      base:
+        'Fissano le due linee di alimentazione alle uscite dei serbatoi e agli ingressi delle pompe. Tra le flange c’è una guarnizione: da qui non deve trafilare nemmeno una goccia.',
+      expert:
+        'Flange imbullonate con guarnizioni metalliche o in PTFE: sul lato LOX devono restare a tenuta anche a temperature criogeniche, quando il metallo si contrae. Tutto ciò che tocca l’ossigeno liquido viene pulito e sgrassato con cura, perché oli e grassi a contatto con il LOX possono incendiarsi.',
+      explode: FEED_EXPLODE,
     });
 
     // ---------- Thrust structure (static, not clickable) ----------
@@ -611,9 +846,21 @@ export default {
     turbine.position.y = 0.24;
     rotor.add(loxImp, fuelImp, turbine);
     tp.add(rotor);
-    // Mounting struts to the chamber jacket.
-    tp.add(strut(V(0.225 - TP_X, 0.56, -0.07), V(-0.13, 0.56, -0.07), 0.016, dark));
-    tp.add(strut(V(0.17 - TP_X, 0.3, -0.08), V(-0.19, 0.3, -0.08), 0.016, dark));
+    // Mounting struts: two feet bolted to the pads on the chamber barrel, plus a brace to the turbine casing.
+    const toTp = (v) => v.sub(V(TP_X, 0, 0));
+    for (const y of MOUNT_Y) {
+      const foot = rbox(0.012, 0.085, 0.095, 0.004, dark, toTp(mountPt(R_FOOT + 0.006, y)).toArray());
+      foot.rotation.y = -MOUNT_A;
+      tp.add(foot);
+    }
+    tp.add(strut(toTp(mountPt(R_FOOT + 0.01, MOUNT_Y[0])), V(-0.12, MOUNT_Y[0], -0.06), 0.016, dark));
+    tp.add(strut(toTp(mountPt(R_FOOT + 0.01, MOUNT_Y[1])), V(-0.03, MOUNT_Y[1], -0.06), 0.016, dark));
+    tp.add(strut(toTp(mountPt(R_FOOT + 0.01, MOUNT_Y[0] - 0.02)), V(-0.19, 0.3, -0.08), 0.013, dark));
+    // Fuel inlet boss: the RP-1 feed line bolts on here.
+    const fuelInlet = new THREE.Mesh(pipe(0.07, 0, 0.05, 32), pumpMat);
+    fuelInlet.position.copy(toTp(fuelTip.clone())).addScaledVector(fuelAxis, -0.025);
+    fuelInlet.quaternion.copy(fuelQuat);
+    tp.add(fuelInlet);
     // Speed pickup with its cable.
     tp.add(rbox(0.03, 0.03, 0.04, 0.006, brass, [0, 0.64, -0.085]));
     addPart(eng, tp, {
@@ -623,6 +870,22 @@ export default {
         'Il cuore nascosto del motore: una turbina fa girare due pompe montate sullo stesso albero, a circa 36.000 giri al minuto. Insieme spingono in camera circa 300 kg di propellenti al secondo: svuoterebbero una vasca da bagno in mezzo secondo.',
       expert:
         'Pompe centrifughe monostadio per LOX (in alto) e RP-1, turbina ad azione in basso, tutto su un unico albero. La pressione di mandata deve superare i ~97 bar della camera più le perdite di canali e iniettore. Tra la pompa LOX e quella del cherosene una tenuta spurgata con elio impedisce che i due propellenti si incontrino.',
+      explode: [0.9, 0.15, 0.2],
+    });
+    // Mount bolts: four per foot, heads pointing radially out of the chamber pads.
+    const mountOut = mountPt(1, 0);
+    const mountQuat = new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), mountOut);
+    const pumpBoltItems = [];
+    for (const y of MOUNT_Y)
+      for (const dy of [-0.028, 0.028])
+        for (const t of [-0.033, 0.033]) pumpBoltItems.push({ p: mountPt(R_FOOT + 0.012, y + dy, t).toArray(), q: mountQuat });
+    addPart(eng, instanced(screw(0.011, 0.01, 0.032), boltMat, pumpBoltItems), {
+      id: 'pumpBolts',
+      name: 'Bulloni dei supporti della turbopompa',
+      base:
+        'Fissano i piedini dei supporti della turbopompa alle piazzole sulla camera di combustione. Tolti questi, la turbopompa si sfila di lato.',
+      expert:
+        'La turbopompa è portata dalla camera di spinta tramite puntoni e piedini imbullonati, così quando il gimbal inclina il motore tutto si muove come un corpo unico. I supporti devono reggere le vibrazioni di un rotore a oltre 30.000 giri/min e lasciare un po’ di libertà alle dilatazioni termiche, tra una pompa criogenica e una camera calda.',
       explode: [0.9, 0.15, 0.2],
     });
 
@@ -798,7 +1061,6 @@ export default {
         steelCut
       )
     );
-    inj.add(instanced(BOLT, boltMat, circle(RF - 0.012, PT, 24, 0, 0, 0.07)));
     // Hollow pintle: LOX runs down its bore and sprays out radially at the tip.
     inj.add(
       new THREE.Mesh(
@@ -828,6 +1090,16 @@ export default {
         'Il Merlin usa un iniettore a pintle: uno spinotto centrale da cui un propellente esce in getti radiali che incrociano la lamina anulare dell’altro. È robusto contro le instabilità di combustione e si presta alla regolazione della spinta. L’accensione avviene con TEA-TEB, che si infiamma da solo a contatto con l’ossigeno (lampo verde).',
       explode: [0, 0.5, 0],
     });
+    // Head bolts: through the injector flange into the top of the chamber wall.
+    addPart(eng, instanced(screw(0.012, 0.011, 0.045), boltMat, circle(RF - 0.024, PT, 20, 0, 0, 0.07)), {
+      id: 'injectorBolts',
+      name: 'Bulloni dell’iniettore',
+      base:
+        'Stringono la testa dell’iniettore sopra la camera di combustione. Devono tenere chiusa una giunzione dietro cui la pressione sfiora i cento bar.',
+      expert:
+        'Corona di bulloni sulla flangia tra iniettore e camera: con Pc ≈ 97 bar, su una camera larga qualche decina di centimetri la forza che tende ad aprire la giunzione è dell’ordine di cento tonnellate. Per questo i bulloni sono tanti, in lega ad alta resistenza, serrati a croce e con una tenuta metallica tra le flange.',
+      explode: [0, 0.5, 0],
+    });
 
     // ---------- Combustion chamber: copper liner + coolant channels + jacket ----------
     const chamber = new THREE.Group();
@@ -836,6 +1108,12 @@ export default {
     chamber.add(instanced(ribGeo(Y_INJ, Y_BAR), ribMat, ribItems()));
     for (const y of [0.74, 0.6, 0.46]) chamber.add(ring(R_C + R_OUT + 0.008, 0.01, y, steelCut));
     for (const p of [[-0.245, 0.56, 0], [0, 0.56, -0.245]]) chamber.add(rbox(0.05, 0.06, 0.05, 0.01, dark, p));
+    // Pads for the turbopump mount feet.
+    for (const y of MOUNT_Y) {
+      const pad = rbox(0.028, 0.09, 0.1, 0.006, dark, mountPt(R_FOOT - 0.014, y).toArray());
+      pad.rotation.y = -MOUNT_A;
+      chamber.add(pad);
+    }
     // Pressure transducers with their harness to the junction box.
     const sensorGeo = new THREE.CylinderGeometry(0.014, 0.014, 0.045, 12);
     for (const [a, y] of [[Math.PI * 0.8, 0.7], [Math.PI * 1.25, 0.52]]) {
@@ -877,17 +1155,15 @@ export default {
     nozzle.add(new THREE.Mesh(wallGeo(Y_BAR, Y_EXT, 0, LINER), copper));
     nozzle.add(new THREE.Mesh(wallGeo(Y_BAR, Y_EXT, LINER + GAP, R_OUT), jacketMat));
     nozzle.add(instanced(ribGeo(Y_BAR, Y_EXT), ribMat, ribItems()));
-    nozzle.add(new THREE.Mesh(wallGeo(Y_EXT, Y_E, 0, 0.014, 72), nozzleExt));
-    // Bolted joint between the regen section and the extension.
+    // Bolted joint between the regen section and the extension: two flanges wide enough to carry the bolt
+    // circle outside the fuel manifold, where the wrench can reach it.
     const rj = rAt(Y_EXT);
-    const joint = new THREE.Mesh(pipe(rj + 0.075, rj + 0.006, 0.022, 64), steelCut);
-    joint.position.y = Y_EXT - 0.011;
-    nozzle.add(joint, instanced(BOLT, boltMat, circle(rj + 0.062, Y_EXT, 28, 0, 0, 0.05)));
+    const R_FL = rj + 0.145;
+    const upperFl = new THREE.Mesh(pipe(R_FL, rj + R_OUT - 0.004, 0.012, 64), steelCut);
+    upperFl.position.y = Y_EXT + 0.006;
     const man = new THREE.Mesh(hollowTorus(R_MAN, 0.034, 0.024), steelCut); // fuel inlet manifold
     man.position.y = Y_EXT + 0.045;
-    nozzle.add(man);
-    for (const y of [-0.75, -1.15]) nozzle.add(ring(rAt(y) + 0.02, 0.012, y, darkCut)); // hat bands
-    nozzle.add(ring(R_E + 0.02, 0.016, Y_E + 0.008, darkCut));
+    nozzle.add(upperFl, man);
     addPart(eng, nozzle, {
       id: 'nozzle',
       name: 'Gola e ugello',
@@ -895,18 +1171,57 @@ export default {
         'L’ugello prima si stringe (la gola) e poi si allarga a campana. Nel punto più stretto i gas raggiungono la velocità del suono; nella campana continuano ad accelerare, raffreddandosi, fino a circa 10.000 km/h. È questa velocità che crea la spinta.',
       expert:
         'Ugello de Laval: nel convergente il flusso subsonico accelera, in gola M = 1, nel divergente il flusso supersonico accelera perché la sezione aumenta. Rapporto d’area ~16 sul Merlin 1D al mare, profilo a campana (Rao). Velocità efficace di scarico ~2,8 km/s al mare e ~3,05 km/s nel vuoto. La parte alta in rame è raffreddata dal combustibile, che entra dal collettore anulare.',
+      explode: [0, -0.5, 0],
+    });
+
+    // ---------- Nozzle extension (bolted under the regen section) ----------
+    const ext = new THREE.Group();
+    ext.add(new THREE.Mesh(wallGeo(Y_EXT, Y_E, 0, 0.014, 72), nozzleExt));
+    const lowerFl = new THREE.Mesh(pipe(R_FL, rj + 0.006, 0.012, 64), darkCut);
+    lowerFl.position.y = Y_EXT - 0.006;
+    ext.add(lowerFl);
+    for (const y of [-0.75, -1.15]) ext.add(ring(rAt(y) + 0.02, 0.012, y, darkCut)); // hat bands
+    ext.add(ring(R_E + 0.02, 0.016, Y_E + 0.008, darkCut));
+    addPart(eng, ext, {
+      id: 'nozzleExtension',
+      name: 'Estensione dell’ugello',
+      base:
+        'La parte bassa della campana, imbullonata sotto il tratto in rame. Qui i gas sono già meno caldi e meno densi, quindi basta una parete sottile senza canali: continua ad allargare il getto per farlo accelerare ancora.',
+      expert:
+        'Prolunga del divergente oltre il tratto raffreddato rigenerativamente: il flusso termico cala rapidamente al crescere del rapporto d’area, quindi può bastare una parete sottile raffreddata per irraggiamento o a film. Sul Merlin Vacuum è una gonna in lega di niobio che porta il rapporto d’area oltre 100; al livello del mare un ugello così lungo sovraespanderebbe il getto fino al distacco del flusso dalla parete.',
+      explode: [0, -1.15, 0],
+    });
+    addPart(eng, instanced(screw(0.014, 0.012, 0.034), boltMat, circle(rj + 0.126, Y_EXT + 0.012, 24, 0, 0, 0.05)), {
+      id: 'nozzleBolts',
+      name: 'Bulloni della flangia dell’ugello',
+      base:
+        'Una corona di bulloni stringe l’estensione dell’ugello contro la flangia del tratto in rame. Sono tanti e vicini perché la giunzione deve restare a tenuta tutto intorno.',
+      expert:
+        'Giunzione flangiata tra il tratto rigenerativo e l’estensione: tanti bulloni piccoli e ravvicinati distribuiscono il carico in modo uniforme e tengono chiusa la giunzione nonostante le dilatazioni termiche diverse dei due materiali. Si serrano a croce, in più passate.',
       explode: [0, -0.8, 0],
     });
 
-    // ---------- Gimbal actuators ----------
-    const gimbalPart = new THREE.Group();
+    // ---------- Gimbal joint (stays on the thrust structure) ----------
+    const gimbalJoint = new THREE.Group();
     const block = rbox(0.13, 0.09, 0.13, 0.015, dark, [0, PIV + 0.03, 0]);
     const pinX = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.2, 12), chrome);
     pinX.rotation.z = Math.PI / 2;
     pinX.position.y = PIV + 0.03;
     const pinZ = pinX.clone();
     pinZ.rotation.set(Math.PI / 2, 0, 0);
-    gimbalPart.add(block, pinX, pinZ);
+    gimbalJoint.add(block, pinX, pinZ);
+    addPart(root, gimbalJoint, {
+      id: 'gimbalJoint',
+      name: 'Giunto cardanico',
+      base:
+        'Lo snodo a cui è appeso tutto il motore: come un giunto a croce, lo lascia inclinare in due direzioni. Da qui passa l’intera spinta, che dal motore sale alla struttura del razzo.',
+      expert:
+        'Giunto cardanico a due assi sopra la cupola dell’iniettore: trasmette alla struttura di spinta l’intero carico (≈ 845 kN al livello del mare) lasciando liberi pochi gradi di rotazione in beccheggio e imbardata. I suoi cuscinetti lavorano con carichi enormi e movimenti piccoli e lenti.',
+      explode: [-0.45, 0.2, 0.45],
+    });
+
+    // ---------- Gimbal actuators ----------
+    const gimbalPart = new THREE.Group();
     const actBodyGeo = new THREE.CylinderGeometry(0.045, 0.045, 0.32, 20).translate(0, -0.19, 0);
     const capGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.03, 20);
     const rodGeo = new THREE.CylinderGeometry(0.018, 0.018, 1, 12).translate(0, -0.5, 0);
@@ -946,7 +1261,15 @@ export default {
         a.eye.position.y = -d;
       }
     }
+    // Feed-line ends follow the engine (call after poseActuators: it refreshes gimbal.matrix).
+    function poseFollowers() {
+      for (const g of followers) {
+        g.matrix.multiplyMatrices(gimbal.matrix, eng.matrix);
+        g.matrixWorldNeedsUpdate = true;
+      }
+    }
     poseActuators();
+    poseFollowers();
     // Hydraulic hoses from the thrust structure to each actuator port (posed at rest).
     for (const a of actuators) {
       const p = a.port.position.clone().applyQuaternion(a.g.quaternion).add(a.g.position);
@@ -1181,6 +1504,7 @@ export default {
         rotor.rotation.y = state.cycle * Math.PI * 2 * ROTOR_TURNS;
         gimbal.rotation.set(0.04 * Math.sin(time * 0.5 + 1.0), 0, 0.05 * Math.sin(time * 0.7));
         poseActuators();
+        poseFollowers();
         for (const l of levers) l.rotation.z = -0.3 - 1.0 * T;
 
         posePlume(T, fl);

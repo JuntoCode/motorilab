@@ -3,6 +3,7 @@
 // area computed from the grain geometry. state.cycle only drives the flame flicker.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MAT, cut, lathe, flow, clamp, lerp, smooth } from '../core/helpers.js';
 
 // ---------- Stations (model space, nozzle points down -Y) ----------
@@ -274,9 +275,29 @@ function grainGeometries() {
   return { bore, ends, set };
 }
 
-// Ring of hex bolt heads pointing radially outwards (one InstancedMesh).
-function boltRing(R, y, n, mat, size = 0.011, phase = 0) {
-  const mesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(size, size, size * 0.9, 6), mat, n);
+// Hex head + shank of length `len` below it (local -Y): a screw backing out of its hole (+Y) shows its shank.
+const screwGeo = (r, len) =>
+  mergeGeometries([new THREE.CylinderGeometry(r, r, r * 0.9, 6), new THREE.CylinderGeometry(r * 0.55, r * 0.55, len, 8).translate(0, -r * 0.45 - len / 2, 0)]);
+
+// Circle of axial screws, heads up (dir = 1) or down (dir = -1), seated on the face at height y (one InstancedMesh).
+function screwCircle(R, y, n, mat, size, len, dir = 1) {
+  const mesh = new THREE.InstancedMesh(screwGeo(size, len), mat, n);
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), dir > 0 ? 0 : Math.PI);
+  const s = new THREE.Vector3(1, 1, 1);
+  for (let i = 0; i < n; i++) {
+    const a = ((i + 0.5) / n) * Math.PI * 2;
+    m.compose(new THREE.Vector3(Math.cos(a) * R, y + dir * size * 0.45, Math.sin(a) * R), q, s);
+    mesh.setMatrixAt(i, m);
+  }
+  mesh.computeBoundingSphere();
+  return mesh;
+}
+
+// Ring of hex bolt heads pointing radially outwards (one InstancedMesh). With `len` they are real screws.
+function boltRing(R, y, n, mat, size = 0.011, phase = 0, len = 0) {
+  const geo = len ? screwGeo(size, len) : new THREE.CylinderGeometry(size, size, size * 0.9, 6);
+  const mesh = new THREE.InstancedMesh(geo, mat, n);
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const s = new THREE.Vector3(1, 1, 1);
@@ -560,6 +581,80 @@ export default {
         'I solidi sono semplici, economici, pronti al lancio e danno spinte enormi, ma non si possono parzializzare o spegnere e hanno un Isp più basso (~280 s contro 310–450 s dei liquidi).',
     },
   ],
+  // Officina (see CONTRACT.md). A solid motor is cast, not assembled: the sequence is the final integration
+  // run backwards, and the loaded case (case + insulation + grain) stays in one piece, as in reality.
+  disassembly: {
+    intro:
+      'Un motore a solido non si smonta davvero: il propellente è colato e incollato dentro l’involucro. Qui ripercorriamo all’indietro il suo montaggio finale, fino a restare con il “motore caricato”.',
+    note:
+      'Sequenza semplificata a scopo didattico: è l’integrazione dello stadio vista al contrario, non una procedura reale. Involucro, isolamento e grano restano un pezzo unico: nella realtà non si possono separare, e su un motore carico lavora solo personale specializzato con procedure pirotecniche.',
+    parts: {
+      safeArm: { dir: [0, 1, 0], dist: 0.7 },
+      igniterBolts: { after: ['safeArm'], motion: 'unscrew', turns: 6, out: 0.16, dir: [0, 1, 0], dist: 0.3 },
+      igniter: { after: ['igniterBolts', 'safeArm'], dir: [0, 1, 0], dist: 1.3, duration: 1.2 },
+      raceway: { dir: [0.32, 0, 0.95], dist: 0.7 },
+      aftSkirtBolts: { motion: 'unscrew', turns: 5, out: 0.06, dir: [0, -1, 0], dist: 0.2 },
+      aftSkirt: { after: ['aftSkirtBolts'], dir: [0, -1, 0], dist: 1.6, duration: 1.2 },
+      tvcPins: { after: ['aftSkirt'], motion: 'unscrew', turns: 4, out: 0.11, dir: [0, -1, 0], dist: 0.25 },
+      tvc: { after: ['tvcPins', 'aftSkirt'], dir: [-0.7, -0.5, -0.7], dist: 0.9 },
+      nozzleBolts: { after: ['aftSkirt'], motion: 'unscrew', turns: 6, out: 0.08, dir: [0, -1, 0], dist: 0.3 },
+      nozzle: { after: ['nozzleBolts', 'tvc', 'aftSkirt'], with: ['throatInsert', 'flexSeal'], dir: [0, -1, 0], dist: 1.7, duration: 1.3 },
+      throatInsert: { dir: [0, -1, 0], dist: 1.6 },
+      flexSeal: { after: ['nozzle'], dir: [0, -1, 0], dist: 1.0 },
+      motorCase: { after: ['raceway', 'aftSkirt', 'nozzle', 'igniter'] },
+    },
+    steps: [
+      {
+        id: 'safe',
+        name: 'Stacca il dispositivo di sicurezza',
+        base: 'Per prima cosa si toglie il “lucchetto” dell’accensione con il suo cavo: senza di lui nessun comando può arrivare all’accenditore.',
+        expert:
+          'Nel montaggio reale il Safe & Arm e la linea di accensione sono tra le ultime cose a essere installate, proprio per sicurezza: andando all’indietro sono le prime a sparire. Con la catena pirotecnica interrotta il motore è inerte.',
+        parts: ['safeArm'],
+      },
+      {
+        id: 'igniter',
+        name: 'Estrai l’accenditore',
+        base: 'Si svitano i bulloni in cima al motore e si sfila l’accenditore dall’alto: è un tubo che pesca nel foro a stella del propellente.',
+        expert:
+          'L’accenditore pirogeno è imbullonato sul boss polare anteriore e sporge nel canale del grano. La tenuta è fatta con O-ring sulla flangia; tolto lui, la bocca anteriore dell’involucro resta aperta sul canale a stella.',
+        parts: ['igniterBolts', 'igniter'],
+      },
+      {
+        id: 'raceway',
+        name: 'Togli la canalina dei cavi',
+        base: 'Si stacca dal fianco del motore la canalina che porta i cavi dall’alto fino agli attuatori dell’ugello.',
+        expert:
+          'Scollegati i connettori alle due estremità, il tunnel dei sistemi si separa dai suoi supporti sull’involucro. I cablaggi del TVC non possono attraversare il motore: corrono per forza all’esterno.',
+        parts: ['raceway'],
+      },
+      {
+        id: 'skirt',
+        name: 'Sfila la gonna posteriore',
+        base: 'Si svita la corona di viti e la gonna bianca scende verso il basso, passando attorno all’ugello: ora si vedono il fondo del motore, il giunto e gli attuatori.',
+        expert:
+          'Tolte le viti radiali del giunto con l’involucro, la gonna si sfila assialmente. Nella realtà gli attuatori sono ancorati alla struttura posteriore e si raggiungono dagli sportelli; nel modello, per semplicità, i loro attacchi restano sul fondo dell’involucro.',
+        parts: ['aftSkirtBolts', 'aftSkirt'],
+      },
+      {
+        id: 'tvc',
+        name: 'Stacca gli attuatori',
+        base: 'Si sfilano i quattro perni e i due attuatori elettrici si liberano: l’ugello non è più comandato.',
+        expert:
+          'Ogni attuatore elettromeccanico è incernierato a due snodi sferici: tolti i perni e scollegati i cavi di potenza e dei sensori di posizione, esce intero. Senza attuatori il giunto flessibile tiene l’ugello circa al centro, ma niente lo guida più.',
+        parts: ['tvcPins', 'tvc'],
+      },
+      {
+        id: 'nozzle',
+        name: 'Sfila l’ugello',
+        base: 'Si svitano i bulloni della flangia e tutto l’ugello scende in un pezzo solo, con il giunto flessibile e l’inserto di gola: la sua parte alta era nascosta dentro il motore.',
+        expert:
+          'Ugello, inserto di gola e flex seal formano un unico gruppo, assemblato e collaudato a parte e poi imbullonato al boss polare posteriore. Essendo sommerso, va sfilato per un bel tratto prima che il naso esca dal fondo. ' +
+          'Resta il motore caricato: involucro, isolamento e grano, che non si separano più.',
+        parts: ['nozzleBolts', 'nozzle'],
+      },
+    ],
+  },
   camera: { position: [5.41, 3.54, 10.44], target: [0.55, 0.2, 0.0] },
 
   build(ctx) {
@@ -609,29 +704,30 @@ export default {
     for (const y of [-0.55, 0.0, 0.55, 1.05]) caseG.add(ring(R_OUT + 0.002, 0.006, y, caseBandMat, 96));
     const RS = R_OUT + 0.016; // skirt outer radius
     caseG.add(new THREE.Mesh(lathe([[R_OUT + 0.002, 1.38], [RS, 1.38], [RS, 1.96], [R_OUT + 0.002, 1.96], [R_OUT + 0.002, 1.38]], 96), skirtMat));
-    caseG.add(
+    // The aft skirt, its joint screws and the cable raceway are parts of their own (they come off in the Officina).
+    const aftG = new THREE.Group();
+    aftG.add(
       new THREE.Mesh(
         lathe([[R_OUT + 0.002, -0.95], [RS, -0.95], [RS, -1.2], [0.682, -1.93], [0.664, -1.93], [R_OUT + 0.002, -1.2], [R_OUT + 0.002, -0.95]], 96),
         skirtMat
       )
     );
     // interface rings (machined aluminium) at the skirt ends
-    caseG.add(band(RS + 0.006, R_OUT + 0.002, 1.95, 1.99, steelCut, 96), band(0.69, 0.66, -1.965, -1.925, steelCut, 96));
+    caseG.add(band(RS + 0.006, R_OUT + 0.002, 1.95, 1.99, steelCut, 96));
+    aftG.add(band(0.69, 0.66, -1.965, -1.925, steelCut, 96));
     // bolt rows: skirt flanges and skirt-to-case joints
     const boltMat = cut(MAT.steel());
-    caseG.add(
-      boltRing(RS + 0.006, 1.97, 64, boltMat),
-      boltRing(RS, 1.43, 64, boltMat, 0.01, 0.5),
-      boltRing(RS, -0.99, 64, boltMat, 0.01, 0.5),
-      boltRing(0.69, -1.945, 64, boltMat)
-    );
+    caseG.add(boltRing(RS + 0.006, 1.97, 64, boltMat), boltRing(RS, 1.43, 64, boltMat, 0.01, 0.5));
+    aftG.add(boltRing(0.69, -1.945, 64, boltMat));
+    const aftBolts = boltRing(RS, -0.99, 64, boltMat, 0.01, 0.5, 0.035);
     // systems tunnel (cable raceway) along the case, with clamps
     const PHI_R = 1.25;
+    const raceG = new THREE.Group();
     const raceMat = cut(MAT.paint(0xc3c8ce, 0.5));
     const race = new THREE.Mesh(new RoundedBoxGeometry(0.1, 2.3, 0.05, 2, 0.018), raceMat);
     race.position.set(Math.cos(PHI_R) * (R_OUT + 0.024), 0.215, Math.sin(PHI_R) * (R_OUT + 0.024));
     race.rotation.y = Math.PI / 2 - PHI_R;
-    caseG.add(race);
+    raceG.add(race);
     const clamps = new THREE.InstancedMesh(new RoundedBoxGeometry(0.15, 0.025, 0.066, 1, 0.008), cut(MAT.darkSteel()), 7);
     const cm = new THREE.Matrix4();
     for (let i = 0; i < 7; i++) {
@@ -640,7 +736,7 @@ export default {
       clamps.setMatrixAt(i, cm);
     }
     clamps.computeBoundingSphere();
-    caseG.add(clamps);
+    raceG.add(clamps);
     // stage marking on the forward skirt and access doors on the aft skirt
     const mark = new THREE.Mesh(
       new THREE.CylinderGeometry(RS + 0.002, RS + 0.002, 0.15, 24, 1, true, 0.08, 0.7),
@@ -654,16 +750,16 @@ export default {
       const r = 0.664;
       door.position.set(Math.cos(a) * r, -1.55, Math.sin(a) * r);
       door.rotation.set(-0.05, Math.PI / 2 - a, 0, 'YXZ');
-      caseG.add(door);
+      aftG.add(door);
     }
     // polar bosses
     const yFo = Y_CT + H_F * Math.sin(Math.acos(R_FO / R_OUT));
     const yAo = Y_CB - H_A * Math.sin(Math.acos(R_AO / R_OUT));
     caseG.add(band(0.2, 0.08, yFo - 0.05, yFo + 0.03, steelCut, 48));
     caseG.add(band(0.36, 0.25, yAo - 0.045, yAo + 0.03, steelCut, 64));
-    // TVC actuator brackets on the aft skirt
-    for (const [x, z] of [[-0.6, 0], [0, -0.6]]) {
-      const b = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.1, 0.08), dark);
+    // TVC actuator brackets on the aft dome, just inside the aft skirt
+    for (const [x, z] of [[-0.583, 0], [0, -0.583]]) {
+      const b = new THREE.Mesh(new THREE.BoxGeometry(x ? 0.072 : 0.08, 0.1, x ? 0.08 : 0.072), dark);
       b.position.set(x, -1.2, z);
       caseG.add(b);
     }
@@ -678,6 +774,34 @@ export default {
         'Rispetto all’acciaio dei booster dello Shuttle (segmentati e recuperati) riduce molto la massa inerte: il rapporto di massa propellente/totale supera il 90%. ' +
         'Le gonne (skirt) anteriore e posteriore trasmettono la spinta allo stadio e ospitano avionica e attuatori.',
       explode: [-1.6, 0.15, 0],
+    });
+    addPart(root, aftG, {
+      id: 'aftSkirt',
+      name: 'Gonna posteriore',
+      base:
+        'L’anello bianco svasato in fondo al motore: ripara l’attacco dell’ugello e gli attuatori e collega il motore a ciò che gli sta sotto (la rampa di lancio o un altro stadio). Gli sportelli servono ai tecnici per arrivare a ciò che sta dentro.',
+      expert:
+        'Struttura cilindro-conica (skirt) fissata all’estremità dell’involucro con una corona di viti radiali: trasmette i carichi tra il motore e le strutture adiacenti e ospita attuatori TVC, cablaggi e protezioni termiche. ' +
+        'È un pezzo separato dal recipiente in pressione: si monta a motore già caricato, durante l’integrazione dello stadio.',
+      explode: [-1.6, -0.75, 0],
+    });
+    addPart(root, aftBolts, {
+      id: 'aftSkirtBolts',
+      name: 'Viti della gonna posteriore',
+      base: 'Una corona di viti tutto intorno al motore: tengono la gonna posteriore attaccata all’involucro.',
+      expert:
+        'Viti radiali che attraversano la gonna e si avvitano in inserti metallici annegati nel bordo dell’involucro in composito: lavorano a taglio e distribuiscono il carico su tutta la circonferenza.',
+      explode: [-1.6, -0.3, 0],
+    });
+    addPart(root, raceG, {
+      id: 'raceway',
+      name: 'Canalina dei cavi',
+      base:
+        'Un lungo coperchio che corre sul fianco del motore: dentro passano i cavi che portano corrente e comandi dalla parte alta del razzo fino agli attuatori dell’ugello. Non possono passare dall’interno, perché lì c’è il propellente.',
+      expert:
+        'Tunnel dei sistemi (raceway): carenatura esterna che protegge dal flusso aerodinamico e dal riscaldamento i cablaggi di potenza e di segnale del TVC e la linea pirotecnica. ' +
+        'Di solito è fissata con supporti incollati, per non forare il recipiente in pressione in composito.',
+      explode: [-1.3, 0.15, 0.7],
     });
 
     // ---------- Liner + thermal insulation ----------
@@ -761,20 +885,44 @@ export default {
     const ign = new THREE.Group();
     ign.add(
       new THREE.Mesh(
-        lathe([[0, 1.99], [0.11, 1.99], [0.11, 1.93], [0.07, 1.93], [0.07, 1.52], [0.055, 1.45], [0.035, 1.4], [0.045, 1.37], [0.03, 1.37]], 32),
+        // closure flange seated on the forward polar boss (top of the boss: yFo + 0.03)
+        lathe([[0, 1.99], [0.19, 1.99], [0.19, 1.9], [0.175, yFo + 0.03], [0.07, yFo + 0.03], [0.07, 1.52], [0.055, 1.45], [0.035, 1.4], [0.045, 1.37], [0.03, 1.37]], 32),
         steel
       )
     );
+    const saG = new THREE.Group();
     const sa = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.08, 0.11), MAT.paint(0x6b7480, 0.5));
     sa.position.y = 2.03;
     const saCap = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.03, 16), MAT.paint(0xd2502a, 0.5));
     saCap.position.set(0.035, 2.085, 0);
+    // firing line from the S&A to its connector on the forward skirt wall
     const cable = new THREE.Mesh(
-      new THREE.TubeGeometry(new THREE.CatmullRomCurve3([V(-0.07, 2.03, 0), V(-0.25, 2.02, -0.05), V(-0.45, 1.97, -0.12), V(-0.55, 1.9, -0.2)]), 24, 0.012, 6),
+      new THREE.TubeGeometry(new THREE.CatmullRomCurve3([V(-0.07, 2.03, 0), V(-0.25, 2.02, -0.05), V(-0.45, 1.97, -0.12), V(-0.57, 1.9, -0.21)]), 24, 0.012, 6),
       rubber
     );
-    ign.add(sa, saCap, cable);
-    ign.add(boltRing(0.105, 1.96, 10, steel, 0.009)); // igniter flange bolts
+    const plug = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.05), dark);
+    plug.position.set(-0.565, 1.89, -0.205);
+    plug.rotation.y = -0.35;
+    saG.add(sa, saCap, cable, plug);
+    addPart(root, saG, {
+      id: 'safeArm',
+      name: 'Dispositivo di sicurezza (Safe & Arm)',
+      base:
+        'Il “lucchetto” dell’accensione: finché non viene armato, poco prima del lancio, tiene interrotta la strada tra il comando elettrico e la carica dell’accenditore. Così una scintilla o un guasto non possono accendere il motore.',
+      expert:
+        'Safe & Arm Device: una barriera meccanica (un rotore) tiene disallineata la catena pirotecnica tra i detonatori e la carica di trasferimento; un attuatore la ruota in posizione “armato” solo nella sequenza finale di lancio. ' +
+        'Lo stato sicuro/armato è segnalato a terra e spesso visibile anche a occhio.',
+      explode: [0, 1.5, 0],
+    });
+    addPart(root, screwCircle(0.15, 1.99, 12, steel, 0.011, 0.14), {
+      id: 'igniterBolts',
+      name: 'Bulloni dell’accenditore',
+      base: 'Dodici bulloni in cerchio che stringono l’accenditore sulla bocca anteriore del motore, a tenuta di gas.',
+      expert:
+        'Fissano la flangia dell’accenditore al boss polare anteriore (l’anello metallico annegato nel fondo dell’involucro); la tenuta è affidata a O-ring. ' +
+        'Devono reggere la pressione di camera, circa 100 bar, che spinge l’accenditore verso l’esterno.',
+      explode: [0, 1.22, 0],
+    });
     addPart(root, ign, {
       id: 'igniter',
       name: 'Accenditore',
@@ -858,6 +1006,16 @@ export default {
       const r = 0.012 * Math.sin((j / 6) * Math.PI); // slight spherical bulge
       flex.add(band(0.29 + r, 0.218 + r * 0.5, y0 - 0.018, y0, j % 2 ? steel : rubber, 64));
     }
+    flex.add(band(0.355, 0.216, -1.45, -1.428, steel, 64)); // mounting flange, bolted under the aft polar boss
+    addPart(root, screwCircle(0.325, -1.45, 16, steel, 0.011, 0.06, -1), {
+      id: 'nozzleBolts',
+      name: 'Bulloni della flangia dell’ugello',
+      base: 'Il cerchio di bulloni che tiene tutto l’ugello, con il suo giunto flessibile, attaccato al fondo del motore.',
+      expert:
+        'Collegano la flangia fissa del gruppo ugello (l’estremità anteriore del flex seal) al boss polare posteriore dell’involucro. ' +
+        'Tutta la spinta che nasce sull’ugello e la forza della pressione sul giunto passano da questa corona di bulloni, con O-ring di tenuta tra le due facce.',
+      explode: [0, -0.64, 0.45],
+    });
     addPart(root, flex, {
       id: 'flexSeal',
       name: 'Giunto flessibile (flex seal)',
@@ -899,14 +1057,32 @@ export default {
         'Deflessione di alcuni gradi e banda passante di qualche hertz, sufficienti a controllare beccheggio e imbardata durante il volo atmosferico.',
       explode: [-0.9, -0.7, 0],
     });
+    // Hinge pins: instances 0-1 on the case brackets (fixed), 2-3 on the nozzle lugs (they follow the gimbal).
+    const pins = new THREE.InstancedMesh(screwGeo(0.016, 0.085), steel, 4);
+    const pinAxis = [V(0, 0, 1), V(1, 0, 0)]; // heads towards the viewer's side
+    const pinQ = pinAxis.map((d) => new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), d));
+    const pinM = new THREE.Matrix4();
+    const ONE = V(1, 1, 1);
+    const setPin = (i, k, p, off) => pins.setMatrixAt(i, pinM.compose(tmpD.copy(pinAxis[k]).multiplyScalar(off).add(p), pinQ[k], ONE));
+    addPart(root, pins, {
+      id: 'tvcPins',
+      name: 'Perni degli attuatori',
+      base: 'Quattro perni, come quelli di una cerniera: due fissano gli attuatori al motore e due all’ugello, lasciandoli liberi di ruotare mentre spingono.',
+      expert:
+        'Ogni attuatore è una biella a lunghezza variabile incernierata alle due estremità con snodi sferici e perni a taglio: così trasmette solo forze lungo il proprio asse e non si impunta quando l’ugello ruota anche sull’altro piano.',
+      explode: [-0.75, -0.7, 0.25],
+    });
 
     const tmpP = new THREE.Vector3();
     const tmpD = new THREE.Vector3();
     const DOWN = V(0, -1, 0);
+    actuators.forEach((a, k) => setPin(k, k, a.anchor, 0.047));
     function poseActuators() {
       gimbal.updateMatrix();
-      for (const a of actuators) {
+      pins.instanceMatrix.needsUpdate = true;
+      for (const [k, a] of actuators.entries()) {
         tmpP.copy(a.attach).applyMatrix4(noz.matrix).applyMatrix4(gimbal.matrix);
+        setPin(k + 2, k, tmpP, 0.037);
         tmpD.subVectors(tmpP, a.anchor);
         const d = tmpD.length();
         tmpD.divideScalar(d);
@@ -951,7 +1127,8 @@ export default {
 
     // ---------- Hot gas in the nozzle (not clickable) ----------
     const nozGasMat = cut(MAT.gas(0xff7a2a, 0.15));
-    noz.add(new THREE.Mesh(lathe([[0, Y_NOSE], ...profSlice(Y_NOSE, Y_E + 0.01, -0.012), [0, Y_E + 0.01]], 48), nozGasMat));
+    const nozGas = new THREE.Mesh(lathe([[0, Y_NOSE], ...profSlice(Y_NOSE, Y_E + 0.01, -0.012), [0, Y_E + 0.01]], 48), nozGasMat);
+    noz.add(nozGas);
 
     // ---------- Exhaust plume (aluminised: bright, white smoke) ----------
     const plume = new THREE.Group();
@@ -1074,8 +1251,8 @@ export default {
         const assembled = (state.explode || 0) < 0.05;
 
         poseGrain(b);
-        // TVC: gentle steering while thrusting, centred after burnout.
-        const k = burning ? 1 : 0;
+        // TVC: gentle steering while thrusting, centred after burnout and while the motor is taken apart.
+        const k = burning && assembled ? 1 : 0;
         gimbal.rotation.set(0.04 * k * Math.sin(time * 0.6 + 1.0), 0, 0.05 * k * Math.sin(time * 0.8));
         poseActuators();
 
@@ -1107,7 +1284,7 @@ export default {
         // Gas volumes and flows: only while burning and assembled.
         const live = burning && assembled;
         plume.visible = plumeFlow.object.visible = smokeFlow.object.visible = live;
-        gasFlow.object.visible = live;
+        gasFlow.object.visible = nozGas.visible = live; // the gas volume must not stay behind when the nozzle leaves
         ignFlow.object.visible = ignite > 0.01 && assembled;
       },
       readout(state) {

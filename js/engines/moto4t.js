@@ -3,6 +3,7 @@
 // 30° forward. Cycle 0..1 = 720° of crank for cylinder 1, flat-plane crank, firing order 1-2-4-3.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MAT, cut, lathe, pipe, flow, clamp, lerp, smooth } from '../core/helpers.js';
 
 const TAU = Math.PI * 2;
@@ -136,6 +137,18 @@ function bolts(list, axis, mat, r = 0.028, h = 0.028) {
     d.updateMatrix();
     m.setMatrixAt(i, d.matrix);
   });
+  return m;
+}
+// Bolts that Officina can unscrew: hex head plus shank of length `len`; each instance's +Y points out of
+// its hole along `axis` ('+x' | '-x' | '+y' | '-y' | '+z' | '-z').
+const AXES = { '+x': [1, 0, 0], '-x': [-1, 0, 0], '+y': [0, 1, 0], '-y': [0, -1, 0], '+z': [0, 0, 1], '-z': [0, 0, -1] };
+function screws(list, axis, mat, r = 0.028, h = 0.028, len = 0.2) {
+  const g = mergeGeometries([new THREE.CylinderGeometry(r, r, h, 6), new THREE.CylinderGeometry(r * 0.6, r * 0.6, len, 8).translate(0, -h / 2 - len / 2, 0)]);
+  const m = new THREE.InstancedMesh(g, mat, list.length);
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(...AXES[axis]));
+  const mtx = new THREE.Matrix4();
+  const one = new THREE.Vector3(1, 1, 1);
+  list.forEach((p, i) => m.setMatrixAt(i, mtx.compose(new THREE.Vector3(...p), q, one)));
   return m;
 }
 function tube(points, r, mat, seg = 40, radial = 10, closed = false) {
@@ -300,6 +313,153 @@ export default {
       explain: 'Tirando la leva si separano i dischi d’attrito da quelli d’acciaio e il motore gira libero. Molti dischi piccoli trasmettono tanta coppia in poco spazio; l’olio li raffredda e rende l’innesto dolce.',
     },
   ],
+  // Officina (see CONTRACT.md): how each part comes off and what holds it; the guide suggests an order.
+  // Directions of parts on the cylinder bank are in the tilted cylinder frame (+Y = along the bore).
+  // Simplified and educational, not a workshop manual.
+  disassembly: {
+    intro: 'Smontiamo la parte alta del motore fino ai pistoni, poi la frizione sul lato destro.',
+    note: 'Sequenza semplificata a scopo didattico: in officina si segue il manuale del costruttore, con i suoi attrezzi e le sue coppie di serraggio. Sulla moto vera prima si tolgono sella, serbatoio e carene.',
+    parts: {
+      airbox: { dir: [-0.2, 1, 0], dist: 0.9 },
+      wiring: { with: ['sensors'], dir: [-0.5, 1, 0], dist: 0.8 },
+      throttleBodies: { after: ['airbox'], with: ['injectors'], dir: [-0.6, 0.6, 0], dist: 0.8 },
+      injectors: { after: ['airbox'], dir: [-0.6, 0.6, 0], dist: 0.8 },
+      sparkPlugs: { after: ['wiring'], dir: [0, 1, 0], dist: 1.0 },
+      camCoverBolts: { motion: 'unscrew', turns: 6, out: 0.1 },
+      camCover: { after: ['camCoverBolts', 'sparkPlugs', 'airbox'], dir: [0, 1, 0], dist: 0.8 },
+      chainTensioner: { dir: [-1, 0, 0.3], dist: 0.7 },
+      camCapBolts: { after: ['camCover'], motion: 'unscrew', turns: 5, out: 0.08 },
+      camCaps: { after: ['camCapBolts'], dir: [0, 1, 0], dist: 0.6 },
+      camshafts: { after: ['camCaps', 'chainTensioner'], with: ['camChain'], dir: [0, 1, 0], dist: 0.8 },
+      camChain: { after: ['camshafts'], dir: [0, 1, 0], dist: 0.9 },
+      intakeValves: { after: ['camshafts'], dir: [0, 1, 0], dist: 0.8 },
+      exhaustValves: { after: ['camshafts'], dir: [0, 1, 0], dist: 0.8 },
+      exhaustHeaders: { dir: [1, -0.3, 0], dist: 0.9 },
+      waterPump: { dir: [0, -0.3, -1], dist: 0.9 },
+      headBolts: { after: ['camshafts'], motion: 'unscrew', turns: 8, out: 0.35, dist: 0.6, duration: 2.2 },
+      cylinderHead: {
+        after: ['headBolts', 'exhaustHeaders', 'throttleBodies', 'waterPump'],
+        with: ['intakeValves', 'exhaustValves'],
+        dir: [0, 1, 0],
+        dist: 1.0,
+        duration: 1.2,
+      },
+      cylinderBlock: { after: ['cylinderHead', 'camChain'], dir: [0, 1, 0], dist: 0.9 },
+      clutchCoverBolts: { motion: 'unscrew', turns: 6, out: 0.12 },
+      clutchCover: { after: ['clutchCoverBolts'], dir: [0, 0, 1], dist: 0.9 },
+      clutchSpringBolts: { after: ['clutchCover'], motion: 'unscrew', turns: 5, out: 0.1 },
+      pressurePlate: { after: ['clutchSpringBolts'], dir: [0, 0, 1], dist: 0.8 },
+      clutchPlates: { after: ['pressurePlate'], dir: [0, 0, 1], dist: 0.9 },
+      clutchBasket: { after: ['clutchPlates'], dir: [0, 0, 1], dist: 0.9 },
+    },
+    steps: [
+      {
+        id: 'airbox',
+        name: 'Togli l’airbox',
+        base: 'La scatola del filtro dell’aria sta sopra il motore: si sgancia e si solleva.',
+        expert: 'Si staccano i manicotti dai corpi farfallati e il tubo di sfiato che arriva dal coperchio punterie, poi l’airbox si solleva intero con il filtro.',
+        parts: ['airbox'],
+      },
+      {
+        id: 'wiring',
+        name: 'Scollega il cablaggio',
+        base: 'Si staccano i connettori di bobine, iniettori e sensori e si toglie il cablaggio con i sensori.',
+        expert: 'I connettori hanno ganci di sicurezza: si sbloccano senza tirare i fili. Conviene fotografare il percorso del cablaggio prima di toglierlo.',
+        parts: ['wiring'],
+      },
+      {
+        id: 'intake',
+        name: 'Togli i corpi farfallati',
+        base: 'Si allentano le fascette e si sfilano i corpi farfallati, con gli iniettori, dalla testata.',
+        expert: 'I corpi farfallati sono infilati su manicotti di gomma e tenuti da fascette; con loro escono il flauto del carburante e gli iniettori, dopo aver scaricato la pressione della benzina.',
+        parts: ['throttleBodies', 'injectors'],
+      },
+      {
+        id: 'coils',
+        name: 'Sfila bobine e candele',
+        base: 'Le bobine escono tirandole dritte; poi con una chiave lunga si svitano le candele dal fondo dei pozzetti.',
+        expert: 'Le candele sono sottili e in fondo a pozzetti profondi: si svitano a motore freddo con una chiave a tubo con gommino, per non rovinare il filetto nella testata di alluminio.',
+        parts: ['sparkPlugs'],
+      },
+      {
+        id: 'cover',
+        name: 'Togli il coperchio',
+        base: 'Si svitano le viti e si solleva il coperchio punterie: sotto ci sono gli alberi a camme.',
+        expert: 'Le viti si allentano un po’ alla volta; la guarnizione di gomma resta sul bordo del coperchio e va controllata o sostituita.',
+        parts: ['camCoverBolts', 'camCover'],
+      },
+      {
+        id: 'tensioner',
+        name: 'Togli il tenditore',
+        base: 'Si smonta il tenditore dietro al cilindro: così la catena si allenta.',
+        expert: 'Prima si porta il cilindro 1 al punto morto superiore e si controllano i riferimenti di fase sulle corone: al rimontaggio devono tornare identici.',
+        parts: ['chainTensioner'],
+      },
+      {
+        id: 'cams',
+        name: 'Togli gli alberi a camme',
+        base: 'Si svitano i cappelli, si sfila la catena dalle corone e si sollevano gli alberi a camme.',
+        expert: 'Le viti dei cappelli si allentano poco per volta e in sequenza, perché le molle delle valvole spingono gli alberi verso l’alto. In officina la catena si lega con un filo perché non cada nel carter; qui la togliamo per vedere meglio.',
+        parts: ['camCapBolts', 'camCaps', 'camshafts'],
+      },
+      {
+        id: 'exhaust',
+        name: 'Smonta lo scarico',
+        base: 'Si svitano i dadi dei collettori sulla testata e si sfila lo scarico in avanti.',
+        expert: 'I dadi sui prigionieri, cotti dal calore, sono spesso duri da svitare. Le guarnizioni tra collettori e testata si cambiano sempre.',
+        parts: ['exhaustHeaders'],
+      },
+      {
+        id: 'coolant',
+        name: 'Stacca i manicotti',
+        base: 'Si scarica il liquido di raffreddamento e si staccano i manicotti dell’acqua, con la pompa.',
+        expert: 'Il liquido si scarica a motore freddo; i manicotti si sfilano dopo aver allentato le fascette. Al rimontaggio il circuito va riempito e spurgato dall’aria.',
+        parts: ['waterPump'],
+      },
+      {
+        id: 'head',
+        name: 'Solleva la testata',
+        base: 'Si svitano le viti lunghe della testata e la si solleva con le sue 16 valvole.',
+        expert: 'Le viti si allentano nell’ordine inverso a quello di serraggio, dall’esterno verso il centro, per non deformare la testata. Le valvole restano al loro posto: per toglierle serve un attrezzo che comprime le molle.',
+        parts: ['headBolts', 'cylinderHead'],
+      },
+      {
+        id: 'cylinders',
+        name: 'Sfila i cilindri',
+        base: 'Il blocco dei cilindri si sfila verso l’alto: restano i pistoni, attaccati alle bielle.',
+        expert: 'Si solleva diritto, sostenendo i pistoni perché non urtino il carter. Molti motori moderni hanno però i cilindri fusi insieme al semicarter superiore, e allora non si sfilano.',
+        parts: ['cylinderBlock'],
+      },
+      {
+        id: 'clutchCover',
+        name: 'Apri il coperchio frizione',
+        base: 'Sul lato destro si svitano le viti tutto intorno e si toglie il coperchio: compare la frizione.',
+        expert: 'Prima si scarica l’olio, che arriva fin qui. Le viti hanno lunghezze diverse: si annota dove va ciascuna. La guarnizione del coperchio si cambia.',
+        parts: ['clutchCoverBolts', 'clutchCover'],
+      },
+      {
+        id: 'pressure',
+        name: 'Togli lo spingidisco',
+        base: 'Si svitano le cinque viti delle molle e si toglie lo spingidisco.',
+        expert: 'Le viti si allentano a croce, un po’ alla volta, così le molle si scaricano in modo uniforme e lo spingidisco non si storce.',
+        parts: ['clutchSpringBolts', 'pressurePlate'],
+      },
+      {
+        id: 'plates',
+        name: 'Sfila i dischi',
+        base: 'Si sfilano i dischi d’attrito e quelli d’acciaio, che si alternano nel pacco.',
+        expert: 'Si tengono in ordine: i dischi d’attrito si misurano nello spessore, quelli d’acciaio si controlla che siano piani. Prima di rimontarli, i dischi nuovi si bagnano d’olio.',
+        parts: ['clutchPlates'],
+      },
+      {
+        id: 'basket',
+        name: 'Togli la campana',
+        base: 'Ultima la campana: il “cestello” con la corona dentata che riceve il moto dall’albero motore.',
+        expert: 'Il mozzo interno è fissato da un dado sull’albero primario, che si svita tenendolo fermo con un attrezzo apposito; la campana porta la corona della trasmissione primaria.',
+        parts: ['clutchBasket'],
+      },
+    ],
+  },
   camera: { position: [-4.83, 3.35, 8.04], target: [-0.35, 0.65, -0.35] },
   thumb: { orbit: [-28, 16], zoom: 1.2, view: 'section' },
 
@@ -499,13 +659,17 @@ export default {
     head.add(mesh(extZ(tunnelWalls(), 1.6, 1.8), headMat));
     // cam bearing caps
     const capGeo = new RoundedBoxGeometry(0.2, 0.08, 0.1, 2, 0.02);
+    const camCaps = new THREE.Group();
     const capBolts = [];
-    for (const [a, b] of bridgeZ.slice(0, 5)) for (const cx of CAM_X) {
+    const headBolts = [];
+    for (const [a, b] of bridgeZ.slice(0, 5)) {
       const z = (a + b) / 2;
-      head.add(mesh(capGeo, headMat, cx, 2.16, z));
-      capBolts.push([cx - 0.075, 2.21, z], [cx + 0.075, 2.21, z]);
+      for (const cx of CAM_X) {
+        camCaps.add(mesh(capGeo, headMat, cx, 2.16, z));
+        capBolts.push([cx - 0.075, 2.21, z], [cx + 0.075, 2.21, z]);
+      }
+      headBolts.push([-0.47, 2.135, z], [0.47, 2.135, z]);
     }
-    head.add(bolts(capBolts, 'y', boltMat, 0.02, 0.02));
     // head gasket (block outline with bore holes)
     head.add(mesh(extY(blockShape(), DECK - 0.006, DECK + 0.006), gasketMat));
     // casting ribs and coolant gallery bosses along the head faces
@@ -522,6 +686,18 @@ export default {
       'Il “tetto” dei cilindri: qui ci sono le camere di scoppio, i condotti dove entra l’aria e escono i gas, 16 valvole e le candele.',
       'Testata in lega di alluminio con camere a tetto (pent‑roof), 4 valvole per cilindro con angolo tra le valvole stretto (≈ 22°) per una camera compatta. Condotti di aspirazione quasi diritti e ripidi verso le valvole, condotti di scarico corti; sedi e guide valvola riportate, punterie a bicchierino e alberi a camme su supporti con cappelli lavorati in linea.',
       [0, 1.15, 0]);
+    P(F, screws(headBolts, '+y', boltMat, 0.034, 0.03, 1.0), 'headBolts', 'Viti della testata',
+      'Dieci viti lunghe che attraversano testata e cilindri e si avvitano nel carter: tengono tutto stretto.',
+      'Prigionieri o viti passanti ad alta resistenza: stringono testata, guarnizione e blocco cilindri al semicarter. Si serrano in più passate con un ordine preciso, dal centro verso l’esterno, e si allentano nell’ordine inverso.',
+      [0, 1.15, 0]);
+    P(F, camCaps, 'camCaps', 'Cappelli degli alberi a camme',
+      'I “coperchietti” che tengono fermi gli alberi a camme sui loro supporti.',
+      'Cappelli lavorati in linea con la testata: sono numerati e orientati, ognuno torna al suo posto. Con i supporti formano i cuscinetti degli alberi a camme, lubrificati in pressione.',
+      [0, 1.95, 0]);
+    P(F, screws(capBolts, '+y', boltMat, 0.02, 0.02, 0.2), 'camCapBolts', 'Viti dei cappelli',
+      'Piccole viti che fissano i cappelli degli alberi a camme alla testata.',
+      'Si allentano poco per volta e in sequenza, perché le molle delle valvole spingono gli alberi a camme verso l’alto.',
+      [0, 1.95, 0]);
 
     // Cam cover
     const ccOut = [[-0.6, 2.12], [-0.6, 2.3], [-0.54, 2.39], [-0.44, 2.43], [0.44, 2.43], [0.54, 2.39], [0.6, 2.3], [0.6, 2.12]];
@@ -532,12 +708,15 @@ export default {
     for (const x of [-0.605, 0.605]) camCover.add(mesh(new THREE.BoxGeometry(0.014, 0.014, 3.62), gasketMat, x, 2.125, 0.11));
     const ccBolts = [];
     for (const z of [-1.5, -0.8, 0, 0.8, 1.55]) ccBolts.push([-0.3, 2.44, z], [0.3, 2.44, z]);
-    camCover.add(bolts(ccBolts, 'y', boltMat, 0.024, 0.025));
     // breather nipple
     camCover.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.1, 12).rotateZ(Math.PI / 2), blackCut, -0.64, 2.3, -1.2));
     P(F, camCover, 'camCover', 'Coperchio punterie',
       'Il coperchio che chiude in alto la testata e tiene dentro l’olio che bagna gli alberi a camme.',
       'Coperchio in magnesio o alluminio pressofuso con guarnizione in gomma; le bobine a candela passano attraverso i suoi pozzetti. Integra lo sfiato dei vapori d’olio (blow‑by), rimandati all’airbox.',
+      [0, 2.1, 0]);
+    P(F, screws(ccBolts, '+y', boltMat, 0.024, 0.025, 0.3), 'camCoverBolts', 'Viti del coperchio punterie',
+      'Le viti che fissano il coperchio punterie alla testata.',
+      'Spesso hanno distanziali e gommini: il coperchio appoggia sulla guarnizione e trasmette meno vibrazioni e rumore.',
       [0, 2.1, 0]);
 
     // ---------- Crankshaft (cylinder frame, axis z) ----------
@@ -1189,10 +1368,14 @@ export default {
     for (let i = 0; i < 5; i++) {
       const a = (i / 5) * TAU;
       pPlate.add(mesh(cylZ(0.06, 0.08, 16), MAT.aluminum(), 0.22 * Math.cos(a), 0.22 * Math.sin(a), 2.34));
-      pPlate.add(mesh(cylZ(0.035, 0.03, 6), MAT.chrome(), 0.22 * Math.cos(a), 0.22 * Math.sin(a), 2.39));
     }
     pPlate.add(mesh(cylZ(0.07, 0.06, 6), MAT.chrome(), 0, 0, 2.34));
     pressureRot.add(pPlate);
+    const springBolts = Array.from({ length: 5 }, (_, i) => [0.22 * Math.cos((i / 5) * TAU), 0.22 * Math.sin((i / 5) * TAU), 2.39]);
+    P(pPlate, screws(springBolts, '+z', MAT.chrome(), 0.035, 0.03, 0.2), 'clutchSpringBolts', 'Viti delle molle',
+      'Cinque viti che tengono le molle compresse contro lo spingidisco.',
+      'Si allentano a croce, un giro alla volta, così le molle si scaricano in modo uniforme e lo spingidisco non si storce.',
+      [0, 0, 0.3]);
     P(root, pressure, 'pressurePlate', 'Spingidisco e molle della frizione',
       'Il disco esterno che, spinto dalle molle, stringe tutti i dischi. Quando tiri la leva, si allontana e la frizione “stacca”.',
       'Spingidisco con 5 molle elicoidali (o una molla a tazza) e mozzo interno scanalato sul primario. La leva al manubrio, via cavo o comando idraulico, spinge un’astina che passa dentro l’albero primario e solleva lo spingidisco di 1–2 mm. Nell’animazione si solleva a ogni cambiata.',
@@ -1215,7 +1398,6 @@ export default {
       const cx = x * 0.94 + (x > -0.4 ? 0 : MAIN.x) * 0.06, cy = y * 0.94 + (x > -0.4 ? 0 : MAIN.y) * 0.06;
       ccb.push([cx, cy, 2.48]);
     }
-    clutchCover.add(bolts(ccb, 'z', boltMat, 0.026, 0.03));
     clutchCover.add(mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.07, 16), cut(MAT.paint(0x15171a, 0.5)), MAIN.x + 0.15, MAIN.y + 0.82, 2.12));
     clutchCover.add(mesh(cylZ(0.1, 0.02, 24), cut(MAT.chrome()), MAIN.x + 0.3, MAIN.y - 0.5, 2.48));
     clutchCover.add(mesh(cylZ(0.075, 0.025, 24), cut(MAT.gas(0xd9a030, 0.85, false)), MAIN.x + 0.3, MAIN.y - 0.5, 2.485));
@@ -1242,6 +1424,10 @@ export default {
     P(root, clutchCover, 'clutchCover', 'Coperchio frizione',
       'Il grande coperchio sul lato destro: tolto questo si vedono la frizione e gli ingranaggi della primaria. In alto il tappo per l’olio, in basso l’oblò per controllarne il livello.',
       'Coperchio in alluminio o magnesio con guarnizione, tappo di riempimento e spia di livello dell’olio. Integra il comando di disinnesto della frizione e, davanti, il coperchio del sensore di giri. Smontabile senza aprire il carter: frizione e primaria sono accessibili per la manutenzione.',
+      [0, 0, 2.6]);
+    P(root, screws(ccb, '+z', boltMat, 0.026, 0.03, 0.35), 'clutchCoverBolts', 'Viti del coperchio frizione',
+      'Le viti tutto intorno al coperchio della frizione.',
+      'Viti di lunghezze diverse a seconda della posizione: conviene annotare dove va ciascuna prima di toglierle.',
       [0, 0, 2.6]);
 
     const ign = new THREE.Group();
