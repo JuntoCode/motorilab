@@ -45,7 +45,11 @@ export function grain(material, scale = 40, bump = 0.001, rough = 0.2) {
           vec3 gSx = dFdx(-vViewPosition); vec3 gSy = dFdy(-vViewPosition);
           vec3 gR1 = cross(gSy, normal); vec3 gR2 = cross(normal, gSx);
           float gDet = dot(gSx, gR1) * faceDirection;
-          normal = normalize(abs(gDet) * normal - sign(gDet) * (gD.x * gR1 + gD.y * gR2));
+          // Where the derivatives vanish this would normalise a zero vector: a NaN pixel that the bloom
+          // then smears into a black band. Keep the plain normal there.
+          vec3 gN = abs(gDet) * normal - sign(gDet) * (gD.x * gR1 + gD.y * gR2);
+          float gLen = dot(gN, gN);
+          if (gLen > 1e-20) normal = gN * inversesqrt(gLen);
         }`
       );
   };

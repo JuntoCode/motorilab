@@ -182,6 +182,13 @@ export class EngineViewer {
 
     // Sit the floor under the model and fit the shadow camera around it.
     const box = new THREE.Box3().setFromObject(this.root);
+    // Box of the solid parts only (no particle flows, gas volumes or plumes): used to frame the model.
+    this.fitBox = new THREE.Box3();
+    this.root.traverse((o) => {
+      if (!o.isMesh || o.userData.sectionHelper || !isShown(o)) return;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      if (mats.every((m) => m && !m.transparent && m.depthWrite !== false)) this.fitBox.expandByObject(o);
+    });
     this.floor.position.set(centre0(box).x, box.min.y - 0.02, centre0(box).z);
     this.floor.scale.setScalar(Math.max(9, box.getSize(new THREE.Vector3()).length() * 2.4));
     this.shadowFloor.position.y = box.min.y - 0.015;
@@ -702,7 +709,11 @@ export class EngineViewer {
     const { top = 0, bottom = 0, right = 0, left = 0 } = this.insets || {};
     const freeW = Math.max(W * 0.4, W - right - left);
     const freeH = Math.max(H * 0.4, H - top - bottom);
-    const fit = Math.pow(Math.max(1, 1.3 / (freeW / freeH)), 0.9) * Math.pow(H / freeH, 0.4);
+    let fit = Math.pow(Math.max(1, 1.3 / (freeW / freeH)), 0.9) * Math.pow(H / freeH, 0.4);
+    // That rule of thumb is cautious on narrow screens. Where the model's box is known, come as close as it
+    // allows (never closer than the engine's own camera, never farther than the rule of thumb).
+    const exact = this.#fitScale(new THREE.Vector3(...cam.position).sub(look), look, (freeW / W) * 0.9, (freeH / H) * 0.9);
+    if (exact) fit = clamp(exact, 1, fit);
     const pos = new THREE.Vector3(...cam.position).sub(look).multiplyScalar((1 + 0.5 * this.explode) * fit).add(look);
     this.camTarget = { pos, look };
     if (instant) {
@@ -710,6 +721,33 @@ export class EngineViewer {
       this.controls.target.copy(this.camTarget.look);
       this.camTarget = null;
     }
+  }
+
+  // Distance multiplier (relative to `offset`) at which the solid parts of the model just fill the given
+  // fraction of the view, looking at `look` from the direction of `offset`. Null when the box is unknown.
+  #fitScale(offset, look, fracX, fracY) {
+    const box = this.fitBox;
+    if (!box || box.isEmpty()) return null;
+    const d0 = offset.length();
+    const fwd = offset.clone().normalize().negate();
+    const right = new THREE.Vector3().crossVectors(fwd, Y).normalize();
+    if (right.lengthSq() < 1e-6) return null;
+    const up = new THREE.Vector3().crossVectors(right, fwd);
+    const tanY = Math.tan((this.camera.fov * Math.PI) / 360);
+    const tanX = tanY * this.camera.aspect;
+    let d = d0;
+    for (let pass = 0; pass < 5; pass++) {
+      _w.copy(look).addScaledVector(fwd, -d); // camera position
+      let fill = 0;
+      for (let k = 0; k < 8; k++) {
+        _v.set(k & 1 ? box.max.x : box.min.x, k & 2 ? box.max.y : box.min.y, k & 4 ? box.max.z : box.min.z).sub(_w);
+        const z = Math.max(_v.dot(fwd), 0.05);
+        fill = Math.max(fill, Math.abs(_v.dot(right)) / (z * tanX * fracX), Math.abs(_v.dot(up)) / (z * tanY * fracY));
+      }
+      if (!(fill > 0) || !Number.isFinite(fill)) return null;
+      d *= fill;
+    }
+    return d / d0;
   }
 
   get phases() {
@@ -770,7 +808,7 @@ export class EngineViewer {
       let k = 0;
       if (p.flash > 0) ([color, k] = [PHASE, 0.75]), lit.push(p);
       else if (p === this.selected || p.ghost) [color, k] = [SELECT, 0.55 * soft];
-      else if (p === this.hovered) [color, k] = [HOVER, 0.3 * soft];
+      else if (p === this.hovered) [color, k] = [HOVER, soft < 1 ? 0.07 : 0.3];
       else if (this.hint.includes(p)) ([color, k] = [PHASE, 0.3 + 0.3 * Math.sin(performance.now() / 160) ** 2]), lit.push(p);
       else if (phaseParts.includes(p.id)) [color, k] = [PHASE, 0.45];
       for (const mesh of p.meshes) {
@@ -1059,7 +1097,7 @@ export class EngineViewer {
     if (this.fx?.level > 0 && raw < 0.25) {
       this.frameAvg = lerp(this.frameAvg ?? raw, raw, 0.04);
       this.frameCount = (this.frameCount || 0) + 1;
-      if (this.frameCount > 100 && this.frameAvg > 0.037) {
+      if (this.frameCount > 100 && this.frameAvg > 0.027) {
         this.fx.setLevel(this.fx.level - 1);
         this.frameCount = 0;
         this.frameAvg = 0.016;

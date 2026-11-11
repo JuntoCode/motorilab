@@ -637,30 +637,35 @@ input[type='range']::-moz-range-thumb { width: 12px; height: 12px; border-radius
   .metric { grid-template-columns: 1fr; }
 
   /* Engine page on phones: title on top, model in the middle, everything else in one bottom stack */
-  .hud-top { top: 10px; left: 14px; right: 14px; max-width: none; }
-  .engine-title { font-size: 26px; white-space: normal; line-height: 1.05; }
+  .hud-top { top: 8px; left: 12px; right: 12px; max-width: none; gap: 0; }
+  .crumb { font-size: 11.5px; }
+  .engine-title { font-size: 21px; line-height: 1.05; -webkit-line-clamp: 1; }
   .nav-arrow { display: none; }
-  .hud-bottom { right: 0; padding: 0 10px 10px; gap: 8px; }
+  .hud-bottom { right: 0; padding: 0 8px 8px; gap: 6px; }
   .hud-bottom::before { inset: -24px 0 0; }
   .hud-tools {
     position: static; transform: none; flex-direction: row; justify-content: space-between; gap: 2px;
     width: 100%; padding: 4px; border-radius: 14px;
   }
   .tool-pair { flex: 2; flex-direction: row; padding: 0 4px 0 0; border-bottom: 0; border-right: 1px solid var(--line); }
-  .tool { width: auto; flex: 1; min-width: 0; padding: 7px 2px 5px; font-size: 11.5px; }
-  .tool svg { width: 20px; height: 20px; }
-  .tool.play-tool { margin-top: 0; padding: 7px 2px 5px; }
+  .tool { width: auto; flex: 1; min-width: 0; padding: 5px 2px 4px; gap: 1px; font-size: 10.5px; border-radius: 9px; }
+  .tool svg { width: 19px; height: 19px; }
+  .tool.play-tool { margin-top: 0; padding: 5px 2px 4px; }
+  .tool.play-tool::before { height: 3px; }
   .caption { gap: 4px; }
-  .cap-nav { width: 38px; height: 38px; }
-  .cap-name { font-size: 21px; }
-  .cap-text { font-size: 14px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  .caption.reading .cap-text { -webkit-line-clamp: 6; }
-  .phase-steps { margin-bottom: 4px; }
+  .cap-nav { width: 36px; height: 36px; }
+  .cap-name { font-size: 19px; }
+  /* While the engine runs only the phase name shows; the explanation appears when you stop on a phase. */
+  .cap-text { display: none; font-size: 14px; }
+  .caption.reading .cap-text { display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+  .phase-steps { margin-bottom: 2px; }
+  .phase-steps button { height: 22px; }
+  .phase-steps button i { width: 16px; height: 16px; font-size: 10px; }
   .phase-steps button:not(.on) { padding: 0 3px; }
   .phase-steps button:not(.on) span { display: none; }
-  .ctl-bar { gap: 10px; padding: 6px; border-radius: 14px; }
-  .play { width: 42px; height: 42px; }
-  .info-btn { width: 42px; height: 42px; padding: 0; justify-content: center; }
+  .ctl-bar { gap: 8px; padding: 5px; border-radius: 13px; }
+  .play { width: 40px; height: 40px; border-radius: 10px; }
+  .info-btn { width: 40px; height: 40px; padding: 0; justify-content: center; border-radius: 10px; }
   .info-btn span { display: none; }
   .part-card { bottom: calc(100% + 2px); }
   .hints { top: 42%; gap: 2px; padding: 12px 6px; }
@@ -676,26 +681,43 @@ input[type='range']::-moz-range-thumb { width: 12px; height: 12px; border-radius
   .tabs { overflow-x: auto; scrollbar-width: none; }
   .panel-body { padding: 16px 16px 28px; }
 
-  /* Games on phones: goal and numbers on top, bench as a strip above the tool belt */
-  .g-top { top: 8px; left: 8px; right: 8px; flex-direction: column; gap: 6px; }
-  .g-goal { min-width: 0; width: 100%; max-width: none; padding: 8px 12px 10px; }
-  .g-text { font-size: 20px; margin-bottom: 7px; }
-  .g-stats { width: 100%; }
-  .g-stat { flex: 1; min-width: 0; padding: 4px 10px; }
-  .g-stat b { font-size: 16px; }
-  .g-ico { width: 40px; }
-  .gaming .hud-bottom { padding-bottom: 8px; }
-  .toolbelt { bottom: 76px; padding: 4px; gap: 4px; border-radius: 16px; }
-  .g-tool { width: 80px; padding: 7px 4px 5px; font-size: 13px; }
-  .g-tool svg { width: 24px; height: 24px; }
-  .g-tool[aria-pressed='true'] { transform: translateY(-3px); }
-  .bench { left: 8px; right: 8px; top: auto; bottom: 152px; width: auto; height: 62px; flex-direction: row; align-items: stretch; }
-  .bench h5 { flex-direction: column; justify-content: center; border-bottom: 0; border-right: 1px solid var(--line); padding: 4px 10px; font-size: 11.5px; }
-  .bench-list { flex-direction: row; overflow-x: auto; overflow-y: hidden; padding: 5px; }
-  .bench-item { width: auto; flex: none; max-width: 170px; }
+  /* Games on phones: the model comes first. One slim goal line with the numbers under it, the view
+     buttons shrink to icons, and the bench shows only when it is needed (Rimonta). */
+  .g-top { top: 6px; left: 6px; right: 6px; flex-direction: column; gap: 4px; }
+  .g-goal { min-width: 0; width: 100%; max-width: none; padding: 6px 10px 7px 12px; border-radius: 10px; }
+  .g-goal::before { width: 4px; }
+  .g-mode { display: none; }
+  .g-text { font-size: 17px; margin: 0 0 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .g-text small { font-size: 12px; vertical-align: 1px; margin-right: 6px; }
+  .g-progress { height: 4px; }
+  .g-stats { width: 100%; gap: 4px; }
+  .g-stat { flex: 1; min-width: 0; flex-direction: row; align-items: baseline; justify-content: center; gap: 6px; padding: 3px 8px; border-radius: 8px; }
+  .g-stat small { font-size: 10px; letter-spacing: 0.08em; }
+  .g-stat b { font-size: 14px; }
+  .g-ico { width: 34px; border-radius: 8px; }
+  .g-ico svg { width: 17px; height: 17px; }
+  .gaming .hud-bottom { padding-bottom: 6px; }
+  .gaming .hud-tools { width: auto; align-self: flex-end; padding: 3px; border-radius: 12px; }
+  .gaming .tool-pair { flex: none; padding-right: 3px; }
+  .gaming .tool { flex: none; width: 40px; padding: 8px 0; }
+  .gaming .tool span { display: none; }
+  .toolbelt { left: 6px; bottom: 6px; transform: none; padding: 3px; gap: 3px; border-radius: 12px; }
+  .g-tool { width: auto; flex-direction: row; gap: 5px; padding: 9px 9px; font-size: 13px; border-radius: 9px; }
+  .g-tool.hint span { display: none; }
+  .g-tool svg { width: 21px; height: 21px; }
+  .g-tool[aria-pressed='true'] { transform: none; }
+  .g-sep { margin: 4px 0; }
+  .bench { left: 6px; right: 6px; top: auto; bottom: 58px; width: auto; height: 50px; flex-direction: row; align-items: stretch; border-radius: 12px; }
+  [data-game='strip'] .bench { display: none; }
+  .bench h5 { flex-direction: column; justify-content: center; border-bottom: 0; border-right: 1px solid var(--line); padding: 2px 8px; font-size: 10.5px; }
+  .bench-list { flex-direction: row; overflow-x: auto; overflow-y: hidden; padding: 4px; }
+  .bench-item { width: auto; flex: none; max-width: 150px; padding: 2px 8px 2px 2px; }
+  .bench-item .thumb { width: 38px; height: 38px; }
+  .bench-item .nm { font-size: 12.5px; }
+  .bench-item .need { display: none; }
   .bench-empty { padding: 8px 12px; font-size: 13px; align-self: center; }
-  .g-toast { bottom: auto; top: 128px; font-size: 13.5px; }
-  [data-game='hunt'] .toolbelt { bottom: 76px; }
+  .g-toast { bottom: auto; top: 84px; padding: 6px 12px; font-size: 13px; border-radius: 10px; }
+  .g-pop { font-size: 24px; }
   .g-card { padding: 24px 18px 20px; }
   .mode-grid { grid-template-columns: 1fr 1fr; }
   .mode-card p { font-size: 13px; }

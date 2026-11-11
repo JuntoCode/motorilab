@@ -2,7 +2,6 @@
 // chain (ambient occlusion that respects the cutaway, outline of picked parts, bloom on flames and sparks).
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
@@ -273,6 +272,51 @@ class OutlinePass extends Pass {
   }
 }
 
+// ---------- Scene pass: the only multisampled target of the chain ----------
+// The scene is drawn once into its own 4x MSAA target (colour only is resolved: resolving depth and stencil
+// too costs several milliseconds a frame) and copied into the composer's plain buffers, so the passes that
+// follow never trigger another multisample resolve.
+class ScenePass extends Pass {
+  constructor(fx) {
+    super();
+    this.fx = fx;
+    this.target = new THREE.WebGLRenderTarget(1, 1, {
+      type: THREE.HalfFloatType,
+      samples: 4,
+      stencilBuffer: true,
+      resolveDepthBuffer: false,
+      resolveStencilBuffer: false,
+    });
+    this.material = new THREE.ShaderMaterial({
+      uniforms: { tDiffuse: { value: this.target.texture } },
+      vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+      fragmentShader: `uniform sampler2D tDiffuse; varying vec2 vUv; void main(){ gl_FragColor = texture2D(tDiffuse, vUv); }`,
+      depthTest: false,
+      depthWrite: false,
+      blending: THREE.NoBlending,
+    });
+    this.quad = new FullScreenQuad(this.material);
+  }
+  setSize(w, h) {
+    this.target.setSize(w, h);
+  }
+  render(renderer, writeBuffer) {
+    const oldAuto = renderer.autoClear;
+    renderer.autoClear = false;
+    renderer.setRenderTarget(this.target);
+    renderer.clear();
+    renderer.render(this.fx.scene, this.fx.camera);
+    renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
+    this.quad.render(renderer);
+    renderer.autoClear = oldAuto;
+  }
+  dispose() {
+    this.target.dispose();
+    this.material.dispose();
+    this.quad.dispose();
+  }
+}
+
 // ---------- The chain ----------
 // level 2: ambient occlusion + outline + bloom, level 1: outline + bloom, level 0: plain render.
 export class Fx {
@@ -285,15 +329,16 @@ export class Fx {
     this.solids = []; // opaque meshes of the engine: { mesh }
     this.extras = []; // things that must not write depth in the pre-pass (flows, gases, gizmos, floor)
     this.ghosts = [];
-    this.aoScale = Math.min(window.devicePixelRatio, 2) > 1.25 ? 0.5 : 1;
+    // Ambient occlusion is soft by nature: half resolution is a quarter of the work and looks the same.
+    this.aoScale = 0.5;
 
-    const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4, stencilBuffer: true });
+    const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
     this.composer = new EffectComposer(this.renderer, target);
-    this.renderPass = new RenderPass(this.scene, this.camera);
+    this.renderPass = new ScenePass(this);
     this.ao = new GTAOPass(this.scene, this.camera, 1, 1);
     this.gbuffer = new GBufferPass(this);
-    this.ao.updateGtaoMaterial({ radius: 0.32, distanceExponent: 1.4, thickness: 1.2, scale: 1.15, samples: 12, distanceFallOff: 1, screenSpaceRadius: false });
-    this.ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, radiusExponent: 1, rings: 2, samples: 12 });
+    this.ao.updateGtaoMaterial({ radius: 0.32, distanceExponent: 1.4, thickness: 1.2, scale: 1.15, samples: 8, distanceFallOff: 1, screenSpaceRadius: false });
+    this.ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 5, radiusExponent: 1, rings: 2, samples: 8 });
     this.ao.blendIntensity = 0.9;
     const aoSetSize = this.ao.setSize.bind(this.ao);
     this.ao.setSize = (w, h) => aoSetSize(Math.max(1, Math.round(w * this.aoScale)), Math.max(1, Math.round(h * this.aoScale)));
@@ -302,7 +347,12 @@ export class Fx {
     this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.3, 0.5, 1.3);
     // Threshold on the brightest channel: saturated flames (orange, blue) bloom as much as white sparks.
     const hp = this.bloom.materialHighPassFilter;
-    hp.fragmentShader = hp.fragmentShader.replace('float v = luminance( texel.xyz );', 'float v = max( texel.r, max( texel.g, texel.b ) );');
+    // A NaN or runaway pixel (any shader can produce one) must not enter the blur, or it spreads over the
+    // whole picture as a black block: such pixels are dropped here.
+    hp.fragmentShader = hp.fragmentShader.replace(
+      'float v = luminance( texel.xyz );',
+      'float v = max( texel.r, max( texel.g, texel.b ) ); if ( ! ( v >= 0.0 && v < 1.0e4 ) ) { texel = vec4( 0.0 ); v = 0.0; }'
+    );
     hp.needsUpdate = true;
     this.output = new OutputPass();
     for (const p of [this.renderPass, this.gbuffer, this.ao, this.outline, this.bloom, this.output]) this.composer.addPass(p);
@@ -357,6 +407,7 @@ export class Fx {
   }
 
   dispose() {
+    this.renderPass.dispose();
     this.gbuffer.dispose();
     this.outline.dispose();
     this.ao.dispose();
